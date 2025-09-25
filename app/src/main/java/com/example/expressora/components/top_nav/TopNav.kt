@@ -4,9 +4,18 @@ import android.content.Intent
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.material3.*
+import androidx.compose.material3.Badge
+import androidx.compose.material3.BadgedBox
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -18,11 +27,8 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.example.expressora.R
-import androidx.compose.material3.Badge
-import androidx.compose.material3.BadgedBox
 import com.example.expressora.dashboard.user.notification.NotificationActivity
-import com.example.expressora.dashboard.user.profile.ProfileActivity
-import com.example.expressora.dashboard.user.translation.TranslationActivity
+import com.example.expressora.dashboard.user.settings.SettingsActivity
 
 @Composable
 fun TopNav(
@@ -42,8 +48,8 @@ fun TopNav(
         verticalAlignment = Alignment.CenterVertically
     ) {
         Image(
-            painter = painterResource(id = R.drawable.profile),
-            contentDescription = "Profile",
+            painter = painterResource(id = R.drawable.settings),
+            contentDescription = "Settings",
             colorFilter = ColorFilter.tint(Color.Black),
             modifier = Modifier
                 .size(30.dp)
@@ -102,7 +108,7 @@ fun TopNavBarPreview() {
             modifier = Modifier.align(Alignment.Center),
             notificationCount = 2,
             onProfileClick = {
-                context.startActivity(Intent(context, ProfileActivity::class.java))
+                context.startActivity(Intent(context, SettingsActivity::class.java))
             },
             onTranslateClick = {
 

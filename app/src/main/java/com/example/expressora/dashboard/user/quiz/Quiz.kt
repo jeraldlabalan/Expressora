@@ -43,6 +43,9 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.navigation.compose.NavHost
+import androidx.navigation.compose.composable
+import androidx.navigation.compose.rememberNavController
 import coil.compose.AsyncImage
 import com.example.expressora.R
 import com.example.expressora.components.bottom_nav.BottomNav
@@ -63,9 +66,9 @@ class QuizActivity : ComponentActivity() {
 @Composable
 fun QuizApp() {
     val context = LocalContext.current
-    var currentScreen by remember { mutableStateOf("difficulty") }
-    var selectedDifficulty by remember { mutableStateOf("") }
+    val navController = rememberNavController()
     val completedDifficulties = remember { mutableStateListOf<String>() }
+    var selectedDifficulty by remember { mutableStateOf("") }
 
     Scaffold(
         topBar = {
@@ -73,51 +76,55 @@ fun QuizApp() {
                 context.startActivity(Intent(context, CommunitySpaceActivity::class.java))
             })
         }, bottomBar = {
-            BottomNav(
-                onLearnClick = {
-                    context.startActivity(
-                        Intent(
-                            context, LearnActivity::class.java
-                        )
+            BottomNav(onLearnClick = {
+                context.startActivity(
+                    Intent(
+                        context, LearnActivity::class.java
                     )
-                },
-                onCameraClick = {
-                    context.startActivity(
-                        Intent(
-                            context, TranslationActivity::class.java
-                        )
+                )
+            }, onCameraClick = {
+                context.startActivity(
+                    Intent(
+                        context, TranslationActivity::class.java
                     )
-                },
-                onQuizClick = { context.startActivity(Intent(context, QuizActivity::class.java)) })
+                )
+            }, onQuizClick = { /* already in quiz */ })
         }, containerColor = Color(0xFFF8F8F8)
     ) { paddingValues ->
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(paddingValues)
-        ) {
-            when (currentScreen) {
-                "difficulty" -> QuizDifficultyScreen(
-                    selectedDifficulty = selectedDifficulty,
-                    completedDifficulties = completedDifficulties,
-                    onDifficultySelected = { difficulty ->
-                        selectedDifficulty = difficulty
-                        currentScreen = "question"
-                    })
+        Box(modifier = Modifier.padding(paddingValues)) {
+            NavHost(navController = navController, startDestination = "difficulty") {
 
-                "question" -> QuizQuestionScreen(
-                    difficulty = selectedDifficulty, onComplete = {
-                        if (selectedDifficulty.isNotEmpty() && !completedDifficulties.contains(
-                                selectedDifficulty
+                composable("difficulty") {
+                    QuizDifficultyScreen(
+                        selectedDifficulty = selectedDifficulty,
+                        completedDifficulties = completedDifficulties,
+                        onDifficultySelected = { difficulty ->
+                            selectedDifficulty = difficulty
+                            navController.navigate("question")
+                        })
+                }
+
+                composable("question") {
+                    QuizQuestionScreen(
+                        difficulty = selectedDifficulty, onComplete = {
+                            if (selectedDifficulty.isNotEmpty() && !completedDifficulties.contains(
+                                    selectedDifficulty
+                                )
+                            ) {
+                                completedDifficulties.add(selectedDifficulty)
+                            }
+                            navController.navigate("completion")
+                        })
+                }
+
+                composable("completion") {
+                    QuizCompletionScreen(
+                        onNextCourse = {
+                            navController.popBackStack(
+                                "difficulty", inclusive = false
                             )
-                        ) {
-                            completedDifficulties.add(selectedDifficulty)
-                        }
-                        currentScreen = "completion"
-                    })
-
-                "completion" -> QuizCompletionScreen(
-                    onNextCourse = { currentScreen = "difficulty" })
+                        })
+                }
             }
         }
     }
@@ -154,9 +161,7 @@ fun QuizDifficultyScreen(
 }
 
 @Composable
-fun DifficultyRow(
-    label: String, isCompleted: Boolean, onClick: () -> Unit
-) {
+fun DifficultyRow(label: String, isCompleted: Boolean, onClick: () -> Unit) {
     val bg = if (isCompleted) Color(0xFFBBFFA0) else Color(0xFFF8F8F8)
     Column(
         modifier = Modifier
@@ -194,7 +199,6 @@ fun QuizQuestionScreen(
     var currentQuestionIndex by remember { mutableStateOf(0) }
     val totalQuestions = 10
     var selectedAnswer by remember { mutableStateOf<String?>(null) }
-
     val answers = listOf("Hello", "M", "A", "Good morning!")
 
     Column(
@@ -203,7 +207,6 @@ fun QuizQuestionScreen(
             .background(Color(0xFFF8F8F8))
             .padding(16.dp)
     ) {
-
         Row(
             modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically
         ) {
@@ -213,9 +216,7 @@ fun QuizQuestionScreen(
                 fontWeight = FontWeight.Bold,
                 fontFamily = InterFontFamily
             )
-
             Spacer(modifier = Modifier.width(8.dp))
-
             Text(
                 text = "${currentQuestionIndex + 1}/$totalQuestions",
                 fontSize = 16.sp,
@@ -273,9 +274,8 @@ fun QuizQuestionScreen(
                                             if (isSelected) Color(0xFFBBFFA0) else Color(0xFFFDE58A),
                                             shape = MaterialTheme.shapes.medium
                                         )
-                                        .clickable {
-                                            selectedAnswer = answer
-                                        }, contentAlignment = Alignment.Center
+                                        .clickable { selectedAnswer = answer },
+                                    contentAlignment = Alignment.Center
                                 ) {
                                     Text(
                                         text = answer,

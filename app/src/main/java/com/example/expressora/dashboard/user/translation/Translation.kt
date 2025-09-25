@@ -1,52 +1,94 @@
 package com.example.expressora.dashboard.user.translation
 
+import android.Manifest
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.media.AudioManager
 import android.os.Build
 import android.os.Bundle
 import android.speech.tts.TextToSpeech
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.compose.foundation.Image
+import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.camera.core.CameraSelector
+import androidx.camera.lifecycle.ProcessCameraProvider
+import androidx.camera.view.PreviewView
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Camera
 import androidx.compose.material.icons.filled.CloseFullscreen
 import androidx.compose.material.icons.filled.OpenInFull
 import androidx.compose.material.icons.filled.SwapCalls
 import androidx.compose.material.icons.filled.VolumeUp
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.tooling.preview.Preview
-import com.example.expressora.R
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.core.content.ContextCompat
 import com.example.expressora.components.bottom_nav.BottomNav
 import com.example.expressora.dashboard.user.learn.LearnActivity
 import com.example.expressora.dashboard.user.quiz.QuizActivity
 import com.example.expressora.ui.theme.InterFontFamily
-import java.util.*
+import kotlinx.coroutines.delay
+import java.util.Locale
+import androidx.camera.core.Preview as CameraPreview
 
 class TranslationActivity : ComponentActivity(), TextToSpeech.OnInitListener {
     private var tts: TextToSpeech? = null
     private var ttsReady by mutableStateOf(false)
     private var selectedLanguage by mutableStateOf("English")
 
+    private val requestPermissionLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        enableEdgeToEdge()
         tts = TextToSpeech(this, this)
+
+        if (ContextCompat.checkSelfPermission(
+                this, Manifest.permission.CAMERA
+            ) != PackageManager.PERMISSION_GRANTED
+        ) {
+            requestPermissionLauncher.launch(Manifest.permission.CAMERA)
+        }
 
         setContent {
             TranslationScreen(
@@ -82,13 +124,10 @@ class TranslationActivity : ComponentActivity(), TextToSpeech.OnInitListener {
 
 fun speakTextAloud(context: Context, tts: TextToSpeech?, text: String) {
     if (tts == null) return
-
     val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
-    val currentVolume = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
-    if (currentVolume == 0) return
+    if (audioManager.getStreamVolume(AudioManager.STREAM_MUSIC) == 0) return
 
     val cleanedText = text.replace(Regex("/\\w+"), "").trim()
-
     tts.setPitch(1.0f)
     tts.setSpeechRate(0.95f)
 
@@ -104,7 +143,6 @@ fun speakTextAloud(context: Context, tts: TextToSpeech?, text: String) {
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun TranslationScreen(
     ttsReady: Boolean,
@@ -113,7 +151,14 @@ fun TranslationScreen(
     speakText: (String) -> Unit
 ) {
     val context = LocalContext.current
+    var useFrontCamera by remember { mutableStateOf(false) }
     var expanded by remember { mutableStateOf(false) }
+    var showCard by remember { mutableStateOf(false) }
+
+    LaunchedEffect(Unit) {
+        delay(3000)
+        showCard = true
+    }
 
     val translations = mapOf(
         "English" to "Hi! I am Keith. /happy", "Filipino" to "Kumusta! Ako si Keith. /masaya"
@@ -145,13 +190,11 @@ fun TranslationScreen(
                     )
                 },
                 onCameraClick = {
-                    context.startActivity(
-                        Intent(
-                            context, TranslationActivity::class.java
-                        )
-                    )
+                    { /* already in translation */ }
                 },
-                onQuizClick = { context.startActivity(Intent(context, QuizActivity::class.java)) })
+                onQuizClick = { context.startActivity(Intent(context, QuizActivity::class.java)) },
+                modifier = Modifier.navigationBarsPadding()
+            )
         }, containerColor = bgColor
     ) { paddingValues ->
         Box(
@@ -159,80 +202,73 @@ fun TranslationScreen(
                 .fillMaxSize()
                 .padding(paddingValues)
         ) {
-            Image(
-                painter = painterResource(id = R.drawable.camera_preview),
-                contentDescription = "Camera Preview",
-                modifier = Modifier.fillMaxSize(),
-                contentScale = ContentScale.Crop
-            )
+            val lifecycleOwner = context as ComponentActivity
+            val previewView = remember { PreviewView(context) }
 
-            Box(
-                modifier = Modifier
-                    .size(250.dp)
-                    .align(Alignment.Center)
-                    .border(1.dp, Color.White)
-            )
+            LaunchedEffect(useFrontCamera) {
+                val cameraProviderFuture = ProcessCameraProvider.getInstance(context)
+                cameraProviderFuture.addListener({
+                    val cameraProvider = cameraProviderFuture.get()
+                    try {
+                        val preview = CameraPreview.Builder().build().also {
+                            it.surfaceProvider = previewView.surfaceProvider
+                        }
+                        val cameraSelector = if (useFrontCamera) CameraSelector.DEFAULT_FRONT_CAMERA
+                        else CameraSelector.DEFAULT_BACK_CAMERA
+                        cameraProvider.unbindAll()
+                        cameraProvider.bindToLifecycle(
+                            lifecycleOwner, cameraSelector, preview
+                        )
+                    } catch (e: Exception) {
+                        e.printStackTrace()
+                    }
+                }, ContextCompat.getMainExecutor(context))
+            }
 
-            Box(
+            AndroidView(
+                modifier = Modifier.fillMaxSize(), factory = { previewView })
+
+            IconButton(
+                onClick = { useFrontCamera = !useFrontCamera },
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .align(Alignment.BottomCenter)
+                    .align(Alignment.TopCenter)
+                    .padding(16.dp)
+                    .size(48.dp)
+                    .background(Color.Transparent)
             ) {
-                Card(
+                Icon(
+                    imageVector = Icons.Filled.Camera,
+                    contentDescription = "Switch Camera",
+                    tint = Color(0xFFFACC15)
+                )
+            }
+
+            AnimatedVisibility(
+                visible = showCard, enter = slideInVertically(
+                    initialOffsetY = { it }, animationSpec = tween(600)
+                ), exit = slideOutVertically(
+                    targetOffsetY = { it }, animationSpec = tween(400)
+                ), modifier = Modifier.align(Alignment.BottomCenter)
+            ) {
+                Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(if (expanded) 260.dp else 140.dp),
-                    shape = RoundedCornerShape(12.dp),
-                    colors = CardDefaults.cardColors(containerColor = cardBgColor),
-                    elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
+                        .align(Alignment.BottomCenter)
                 ) {
-                    Box(modifier = Modifier.fillMaxSize()) {
-                        if (!expanded) {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxSize()
-                                    .padding(horizontal = 24.dp, vertical = 16.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.SpaceBetween
-                            ) {
-                                Column {
-                                    Text(
-                                        text = topLang,
-                                        fontWeight = FontWeight.Bold,
-                                        fontSize = 16.sp,
-                                        color = Color.Black,
-                                        fontFamily = InterFontFamily
-                                    )
-                                    Spacer(modifier = Modifier.height(6.dp))
-                                    Text(
-                                        text = topText,
-                                        fontWeight = FontWeight.Normal,
-                                        fontSize = 16.sp,
-                                        color = Color.Black,
-                                        fontFamily = InterFontFamily
-                                    )
-                                }
-                                IconButton(
-                                    onClick = { if (ttsReady) speakText(topText) },
-                                    modifier = Modifier.padding(end = 8.dp)
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Filled.VolumeUp,
-                                        contentDescription = "Sound",
-                                        tint = Color.Black,
-                                        modifier = Modifier.size(30.dp)
-                                    )
-                                }
-                            }
-                        } else {
-                            Column(
-                                modifier = Modifier
-                                    .fillMaxSize()
-                                    .padding(horizontal = 24.dp, vertical = 16.dp),
-                                verticalArrangement = Arrangement.spacedBy(12.dp)
-                            ) {
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(if (expanded) 260.dp else 140.dp),
+                        shape = RoundedCornerShape(12.dp),
+                        colors = CardDefaults.cardColors(containerColor = cardBgColor),
+                        elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
+                    ) {
+                        Box(modifier = Modifier.fillMaxSize()) {
+                            if (!expanded) {
                                 Row(
-                                    modifier = Modifier.fillMaxWidth(),
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .padding(horizontal = 24.dp, vertical = 16.dp),
                                     verticalAlignment = Alignment.CenterVertically,
                                     horizontalArrangement = Arrangement.SpaceBetween
                                 ) {
@@ -240,7 +276,7 @@ fun TranslationScreen(
                                         Text(
                                             text = topLang,
                                             fontWeight = FontWeight.Bold,
-                                            fontSize = 14.sp,
+                                            fontSize = 16.sp,
                                             color = Color.Black,
                                             fontFamily = InterFontFamily
                                         )
@@ -248,7 +284,7 @@ fun TranslationScreen(
                                         Text(
                                             text = topText,
                                             fontWeight = FontWeight.Normal,
-                                            fontSize = 14.sp,
+                                            fontSize = 16.sp,
                                             color = Color.Black,
                                             fontFamily = InterFontFamily
                                         )
@@ -256,96 +292,135 @@ fun TranslationScreen(
                                     IconButton(onClick = { if (ttsReady) speakText(topText) }) {
                                         Icon(
                                             imageVector = Icons.Filled.VolumeUp,
-                                            contentDescription = "Top Sound",
+                                            contentDescription = "Sound",
                                             tint = Color.Black,
-                                            modifier = Modifier.size(28.dp)
+                                            modifier = Modifier.size(30.dp)
                                         )
                                     }
                                 }
-
-                                Box(
+                            } else {
+                                Column(
                                     modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(vertical = 4.dp),
-                                    contentAlignment = Alignment.Center
+                                        .fillMaxSize()
+                                        .padding(horizontal = 24.dp, vertical = 16.dp),
+                                    verticalArrangement = Arrangement.spacedBy(12.dp)
                                 ) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.SpaceBetween
+                                    ) {
+                                        Column {
+                                            Text(
+                                                text = topLang,
+                                                fontWeight = FontWeight.Bold,
+                                                fontSize = 14.sp,
+                                                color = Color.Black,
+                                                fontFamily = InterFontFamily
+                                            )
+                                            Spacer(modifier = Modifier.height(6.dp))
+                                            Text(
+                                                text = topText,
+                                                fontWeight = FontWeight.Normal,
+                                                fontSize = 14.sp,
+                                                color = Color.Black,
+                                                fontFamily = InterFontFamily
+                                            )
+                                        }
+                                        IconButton(onClick = { if (ttsReady) speakText(topText) }) {
+                                            Icon(
+                                                imageVector = Icons.Filled.VolumeUp,
+                                                contentDescription = "Top Sound",
+                                                tint = Color.Black,
+                                                modifier = Modifier.size(28.dp)
+                                            )
+                                        }
+                                    }
+
                                     Box(
                                         modifier = Modifier
                                             .fillMaxWidth()
-                                            .height(1.dp)
-                                            .background(Color.Gray)
-                                    )
-                                    Box(
-                                        modifier = Modifier
-                                            .size(45.dp)
-                                            .clip(CircleShape)
-                                            .background(Color(0xFFFACC15)),
+                                            .padding(vertical = 4.dp),
                                         contentAlignment = Alignment.Center
                                     ) {
-                                        IconButton(onClick = {
-                                            val tempLang = topLang
-                                            topLang = bottomLang
-                                            bottomLang = tempLang
-                                            topText = translations[topLang] ?: ""
-                                            bottomText = translations[bottomLang] ?: ""
-                                            onLanguageChanged(topLang)
-                                        }) {
+                                        Box(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .height(1.dp)
+                                                .background(Color.Gray)
+                                        )
+                                        Box(
+                                            modifier = Modifier
+                                                .size(35.dp)
+                                                .clip(CircleShape)
+                                                .background(Color(0xFFFACC15)),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            IconButton(onClick = {
+                                                val tempLang = topLang
+                                                topLang = bottomLang
+                                                bottomLang = tempLang
+                                                topText = translations[topLang] ?: ""
+                                                bottomText = translations[bottomLang] ?: ""
+                                                onLanguageChanged(topLang)
+                                            }) {
+                                                Icon(
+                                                    imageVector = Icons.Filled.SwapCalls,
+                                                    contentDescription = "Swap Languages",
+                                                    tint = Color.Black,
+                                                    modifier = Modifier.size(28.dp)
+                                                )
+                                            }
+                                        }
+                                    }
+
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.SpaceBetween
+                                    ) {
+                                        Column {
+                                            Text(
+                                                text = bottomLang,
+                                                fontWeight = FontWeight.Bold,
+                                                fontSize = 14.sp,
+                                                color = Color.Black,
+                                                fontFamily = InterFontFamily
+                                            )
+                                            Spacer(modifier = Modifier.height(6.dp))
+                                            Text(
+                                                text = bottomText,
+                                                fontWeight = FontWeight.Normal,
+                                                fontSize = 14.sp,
+                                                color = Color.Black,
+                                                fontFamily = InterFontFamily
+                                            )
+                                        }
+                                        IconButton(onClick = { if (ttsReady) speakText(bottomText) }) {
                                             Icon(
-                                                imageVector = Icons.Filled.SwapCalls,
-                                                contentDescription = "Swap Languages",
+                                                imageVector = Icons.Filled.VolumeUp,
+                                                contentDescription = "Bottom Sound",
                                                 tint = Color.Black,
                                                 modifier = Modifier.size(28.dp)
                                             )
                                         }
                                     }
                                 }
-
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.SpaceBetween
-                                ) {
-                                    Column {
-                                        Text(
-                                            text = bottomLang,
-                                            fontWeight = FontWeight.Bold,
-                                            fontSize = 14.sp,
-                                            color = Color.Black,
-                                            fontFamily = InterFontFamily
-                                        )
-                                        Spacer(modifier = Modifier.height(6.dp))
-                                        Text(
-                                            text = bottomText,
-                                            fontWeight = FontWeight.Normal,
-                                            fontSize = 14.sp,
-                                            color = Color.Black,
-                                            fontFamily = InterFontFamily
-                                        )
-                                    }
-                                    IconButton(onClick = { if (ttsReady) speakText(bottomText) }) {
-                                        Icon(
-                                            imageVector = Icons.Filled.VolumeUp,
-                                            contentDescription = "Bottom Sound",
-                                            tint = Color.Black,
-                                            modifier = Modifier.size(28.dp)
-                                        )
-                                    }
-                                }
                             }
-                        }
 
-                        IconButton(
-                            onClick = { expanded = !expanded },
-                            modifier = Modifier
-                                .align(Alignment.BottomStart)
-                                .padding(start = 8.dp, bottom = 8.dp)
-                        ) {
-                            Icon(
-                                imageVector = if (expanded) Icons.Filled.CloseFullscreen else Icons.Filled.OpenInFull,
-                                contentDescription = if (expanded) "Collapse" else "Expand",
-                                tint = Color.Black,
-                                modifier = Modifier.size(20.dp)
-                            )
+                            IconButton(
+                                onClick = { expanded = !expanded },
+                                modifier = Modifier
+                                    .align(Alignment.BottomStart)
+                                    .padding(start = 8.dp, bottom = 8.dp)
+                            ) {
+                                Icon(
+                                    imageVector = if (expanded) Icons.Filled.CloseFullscreen else Icons.Filled.OpenInFull,
+                                    contentDescription = if (expanded) "Collapse" else "Expand",
+                                    tint = Color.Black,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
                         }
                     }
                 }

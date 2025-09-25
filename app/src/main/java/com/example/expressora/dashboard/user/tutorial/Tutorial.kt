@@ -9,7 +9,19 @@ import androidx.activity.compose.setContent
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -18,11 +30,20 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material3.*
+import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.runtime.*
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -39,15 +60,14 @@ import com.example.expressora.R
 import com.example.expressora.components.bottom_nav.BottomNav
 import com.example.expressora.components.top_nav.TopNav
 import com.example.expressora.components.top_nav2.TopTabNav2
-import com.example.expressora.dashboard.user.community_space.CommunitySpaceActivity
 import com.example.expressora.dashboard.user.learn.LearnActivity
 import com.example.expressora.dashboard.user.notification.NotificationActivity
-import com.example.expressora.dashboard.user.notification.NotificationScreen
-import com.example.expressora.dashboard.user.profile.ProfileActivity
 import com.example.expressora.dashboard.user.quiz.QuizActivity
+import com.example.expressora.dashboard.user.settings.SettingsActivity
 import com.example.expressora.dashboard.user.translation.TranslationActivity
 import com.example.expressora.ui.theme.InterFontFamily
-import com.google.accompanist.swiperefresh.*
+import com.google.accompanist.swiperefresh.SwipeRefresh
+import com.google.accompanist.swiperefresh.rememberSwipeRefreshState
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -76,8 +96,6 @@ fun TutorialScreen() {
     val scope = rememberCoroutineScope()
 
     val bgColor = Color(0xFFF8F8F8)
-    val cardColorUnwatched = Color(0xFFFFF4C2)
-    val cardColorWatched = Color.White
 
     val videos = remember {
         mutableStateListOf(
@@ -125,9 +143,9 @@ fun TutorialScreen() {
     Scaffold(topBar = {
         Column {
             TopNav(notificationCount = 2, onProfileClick = {
-                context.startActivity(Intent(context, ProfileActivity::class.java))
+                context.startActivity(Intent(context, SettingsActivity::class.java))
             }, onTranslateClick = {
-                context.startActivity(Intent(context, CommunitySpaceActivity::class.java))
+                { /* already in tutorial */ }
             }, onNotificationClick = {
                 context.startActivity(Intent(context, NotificationActivity::class.java))
             })

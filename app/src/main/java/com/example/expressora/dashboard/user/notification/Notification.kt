@@ -4,23 +4,52 @@ import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.compose.animation.*
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.MutableTransitionState
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.*
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Divider
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SwipeToDismissBox
 import androidx.compose.material3.SwipeToDismissBoxValue
+import androidx.compose.material3.Text
 import androidx.compose.material3.rememberSwipeToDismissBoxState
-import androidx.compose.runtime.*
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -36,11 +65,13 @@ import com.example.expressora.components.bottom_nav.BottomNav
 import com.example.expressora.components.top_nav.TopNav
 import com.example.expressora.dashboard.user.community_space.CommunitySpaceActivity
 import com.example.expressora.dashboard.user.learn.LearnActivity
-import com.example.expressora.dashboard.user.profile.ProfileActivity
 import com.example.expressora.dashboard.user.quiz.QuizActivity
+import com.example.expressora.dashboard.user.settings.SettingsActivity
 import com.example.expressora.dashboard.user.translation.TranslationActivity
 import com.example.expressora.ui.theme.InterFontFamily
-import com.google.accompanist.swiperefresh.*
+import com.google.accompanist.swiperefresh.SwipeRefresh
+import com.google.accompanist.swiperefresh.SwipeRefreshIndicator
+import com.google.accompanist.swiperefresh.rememberSwipeRefreshState
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -121,7 +152,7 @@ fun NotificationScreen() {
         TopNav(notificationCount = notifications.count { !it.isRead }, onProfileClick = {
             context.startActivity(
                 Intent(
-                    context, ProfileActivity::class.java
+                    context, SettingsActivity::class.java
                 )
             )
         }, onTranslateClick = {
@@ -131,11 +162,7 @@ fun NotificationScreen() {
                 )
             )
         }, onNotificationClick = {
-            context.startActivity(
-                Intent(
-                    context, NotificationActivity::class.java
-                )
-            )
+            { /* already in notification */ }
         })
     }, bottomBar = {
         BottomNav(onLearnClick = {

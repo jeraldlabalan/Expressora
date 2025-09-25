@@ -4,9 +4,10 @@ import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.compose.foundation.Image
+import androidx.camera.core.CameraSelector
+import androidx.camera.lifecycle.ProcessCameraProvider
+import androidx.camera.view.PreviewView
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -23,6 +24,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Camera
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.KeyboardArrowRight
 import androidx.compose.material3.Button
@@ -31,6 +33,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Divider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -43,15 +46,18 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.core.content.ContextCompat
+import androidx.navigation.compose.NavHost
+import androidx.navigation.compose.composable
+import androidx.navigation.compose.rememberNavController
 import coil.compose.AsyncImage
 import com.example.expressora.R
 import com.example.expressora.components.bottom_nav.BottomNav
@@ -65,77 +71,92 @@ import kotlinx.coroutines.delay
 class LearnActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContent { LearnScreen() }
+        setContent { LearnApp() }
     }
 }
 
 @Composable
-fun LearnScreen() {
-    val context = LocalContext.current
-    var activeScreen by remember { mutableStateOf("difficulty") }
-    var selectedLesson by remember { mutableStateOf<Pair<String, String>?>(null) }
+fun LearnApp() {
+    val navController = rememberNavController()
     val completedLessons = remember { mutableStateListOf<String>() }
+    val context = LocalContext.current
+
+    var currentScreen by remember { mutableStateOf("lessonList") }
 
     Scaffold(
         topBar = {
-            if (activeScreen != "detection") {
+            if (currentScreen != "detection") {
                 TopNav3(onTranslateClick = {
                     context.startActivity(Intent(context, CommunitySpaceActivity::class.java))
                 })
             }
-    }, bottomBar = {
-        BottomNav(onLearnClick = {
-            context.startActivity(Intent(context, LearnActivity::class.java))
-        }, onCameraClick = {
-            context.startActivity(Intent(context, TranslationActivity::class.java))
-        }, onQuizClick = {
-            context.startActivity(Intent(context, QuizActivity::class.java))
-        })
+        }, bottomBar = {
+            BottomNav(
+                onLearnClick = { /* Already in learn */ },
+                onCameraClick = {
+                    context.startActivity(
+                        Intent(
+                            context, TranslationActivity::class.java
+                        )
+                    )
+                },
+                onQuizClick = { context.startActivity(Intent(context, QuizActivity::class.java)) })
         }, containerColor = Color(0xFFF8F8F8)
     ) { paddingValues ->
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(paddingValues)
-        ) {
-            when (activeScreen) {
-                "difficulty" -> LessonListScreen(
-                    selectedLesson = selectedLesson?.first.orEmpty(),
-                    completedLessons = completedLessons,
-                    onLessonSelected = { lesson ->
-                        selectedLesson = lesson
-                        activeScreen = "lessonDetail"
-                    })
 
-                "lessonDetail" -> selectedLesson?.let { (title, description) ->
-                    LessonDetailScreen(
-                        lessonTitle = title, lessonDescription = description, onTryItOut = {
-                            if (!completedLessons.contains(title)) {
-                                completedLessons.add(title)
-                            }
-                            activeScreen = "detection"
+        Box(modifier = Modifier.padding(paddingValues)) {
+            NavHost(navController = navController, startDestination = "lessonList") {
+                composable("lessonList") {
+                    currentScreen = "lessonList"
+                    LessonListScreen(
+                        completedLessons = completedLessons, onLessonSelected = { lesson ->
+                            navController.currentBackStackEntry?.savedStateHandle?.set(
+                                "lesson", lesson
+                            )
+                            navController.navigate("lessonDetail")
                         })
                 }
 
-                "detection" -> DetectionScreen(
-                    ttsReady = true,
-                    selectedLanguage = "English",
-                    onLanguageChanged = { /* handle language change */ },
-                    speakText = { /* handle TTS */ },
-                    onDetectionFinished = { activeScreen = "completion" })
+                composable("lessonDetail") {
+                    currentScreen = "lessonDetail"
+                    val lesson =
+                        navController.previousBackStackEntry?.savedStateHandle?.get<Pair<String, String>>(
+                            "lesson"
+                        )
+                    lesson?.let { (title, description) ->
+                        LessonDetailScreen(
+                            lessonTitle = title, lessonDescription = description, onTryItOut = {
+                                if (!completedLessons.contains(title)) completedLessons.add(title)
+                                navController.navigate("detection")
+                            })
+                    }
+                }
 
-                "completion" -> LessonCompletionScreen(
-                    onNextCourse = { activeScreen = "difficulty" })
+                composable("detection") {
+                    currentScreen = "detection"
+                    DetectionScreen(
+                        onDetectionFinished = { navController.navigate("completion") })
+                }
+
+                composable("completion") {
+                    currentScreen = "completion"
+                    LessonCompletionScreen(
+                        onNextCourse = {
+                            navController.popBackStack(
+                                "lessonList", inclusive = false
+                            )
+                        })
+                }
             }
         }
     }
 }
 
+// ==================== Original Composables ====================
+
 @Composable
 fun LessonListScreen(
-    selectedLesson: String,
-    completedLessons: List<String>,
-    onLessonSelected: (Pair<String, String>) -> Unit
+    completedLessons: List<String>, onLessonSelected: (Pair<String, String>) -> Unit
 ) {
     val lessonTitles = listOf(
         "Introduction and Orientation" to "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Nulla convallis risus nec risus fermentum, tempor ullamcorper orci molestie. Sed pharetra lobortis eros eu consequat. Sed elementum ipsum at sem eleifend tincidunt. Vestibulum quis nibh vitae eros molestie vulputate ac quis nulla. Cras sagittis elementum eros quis commodo. Nullam convallis sollicitudin arcu quis porttitor. Proin dapibus tempor lectus, id finibus diam suscipit a. Vestibulum ac odio risus. Proin lectus mauris, fringilla ut efficitur sit amet, mattis quis risus. Aenean pellentesque consectetur risus. Sed luctus arcu eget lectus auctor mattis.\n" + "\n" + "Cras interdum et magna eu gravida. Maecenas gravida mollis viverra. Phasellus eu ante a metus pulvinar hendrerit. Integer dapibus, libero sit amet tempor mattis, libero lorem lobortis neque, in convallis mauris felis rutrum lorem. Fusce consequat a enim sed rhoncus. Duis viverra imperdiet velit laoreet pharetra. Morbi porta odio nec tellus mollis, non porta ante mollis. Fusce feugiat porttitor gravida. Integer pulvinar lorem et pretium malesuada. Ut condimentum mauris turpis, et egestas quam dapibus non. Integer eu felis quam. Quisque scelerisque a quam nec euismod. Nulla consequat nulla eget euismod venenatis. Etiam tellus erat, ultricies ut efficitur et, rhoncus a dolor.\n" + "\n" + "Quisque lacinia eleifend dui, nec bibendum quam. Sed aliquet neque placerat mauris malesuada venenatis. In ac orci feugiat, bibendum velit vitae, efficitur erat. Mauris aliquam nunc purus, vitae viverra nunc pulvinar in. Praesent sit amet commodo ante. Integer aliquet, justo quis aliquet mollis, mauris dui cursus elit, a convallis ante risus sit amet ipsum. Sed enim diam, consequat in auctor non, vestibulum ut nunc. Nam nec lectus iaculis, dapibus felis et, finibus metus. Maecenas faucibus lorem purus, eget porttitor leo eleifend condimentum. Praesent lectus lacus, sodales sit amet luctus et, interdum a nunc. Nunc condimentum faucibus lobortis.",
@@ -187,9 +208,7 @@ fun LessonRow(
                 .padding(horizontal = 16.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Column(
-                modifier = Modifier.weight(1f)
-            ) {
+            Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = title,
                     fontSize = 18.sp,
@@ -227,7 +246,6 @@ fun LessonDetailScreen(
             .padding(start = 24.dp, top = 24.dp, end = 24.dp, bottom = 40.dp),
         verticalArrangement = Arrangement.SpaceBetween
     ) {
-
         Column(
             modifier = Modifier
                 .weight(1f)
@@ -244,14 +262,13 @@ fun LessonDetailScreen(
                 text = lessonDescription,
                 fontSize = 16.sp,
                 fontFamily = InterFontFamily,
-                color = Color.Black,
+                color = Color(0xFF666666),
                 fontWeight = FontWeight.Normal,
                 textAlign = TextAlign.Justify
             )
         }
 
         Spacer(modifier = Modifier.height(12.dp))
-
 
         Button(
             onClick = onTryItOut,
@@ -272,22 +289,40 @@ fun LessonDetailScreen(
     }
 }
 
-
 @Composable
 fun DetectionScreen(
-    ttsReady: Boolean,
-    selectedLanguage: String,
-    onLanguageChanged: (String) -> Unit,
-    speakText: (String) -> Unit,
     onDetectionFinished: () -> Unit
 ) {
+    val context = LocalContext.current
     var showCheck by remember { mutableStateOf(false) }
     var autoFinishTriggered by remember { mutableStateOf(false) }
+    var useFrontCamera by remember { mutableStateOf(false) }
+
+    val lifecycleOwner = context as ComponentActivity
+    val previewView = remember { PreviewView(context) }
+
+    LaunchedEffect(useFrontCamera) {
+        val cameraProviderFuture = ProcessCameraProvider.getInstance(context)
+        cameraProviderFuture.addListener({
+            try {
+                val cameraProvider = cameraProviderFuture.get()
+                val cameraPreview = androidx.camera.core.Preview.Builder().build().also {
+                    it.surfaceProvider = previewView.surfaceProvider
+                }
+                val cameraSelector = if (useFrontCamera) CameraSelector.DEFAULT_FRONT_CAMERA
+                else CameraSelector.DEFAULT_BACK_CAMERA
+
+                cameraProvider.unbindAll()
+                cameraProvider.bindToLifecycle(lifecycleOwner, cameraSelector, cameraPreview)
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }, ContextCompat.getMainExecutor(context))
+    }
 
     LaunchedEffect(Unit) {
         delay(3000)
         showCheck = true
-
         delay(3000)
         if (!autoFinishTriggered) {
             autoFinishTriggered = true
@@ -300,30 +335,34 @@ fun DetectionScreen(
             .fillMaxSize()
             .background(Color.Black)
     ) {
+        AndroidView(modifier = Modifier.fillMaxSize(), factory = { previewView })
 
-        Image(
-            painter = painterResource(id = R.drawable.camera_preview),
-            contentDescription = "Camera Preview",
-            modifier = Modifier.fillMaxSize(),
-            contentScale = ContentScale.Crop
-        )
-
-        Text(
-            text = "Put your hands in front of the camera",
-            color = Color.White,
-            fontSize = 18.sp,
-            fontWeight = FontWeight.SemiBold,
+        Column(
             modifier = Modifier
                 .align(Alignment.TopCenter)
-                .padding(top = 32.dp)
-        )
+                .padding(top = 16.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            IconButton(
+                onClick = { useFrontCamera = !useFrontCamera }, modifier = Modifier.size(48.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.Camera,
+                    contentDescription = "Flip Camera",
+                    tint = Color(0xFFFACC15)
+                )
+            }
 
-        Box(
-            modifier = Modifier
-                .size(250.dp)
-                .align(Alignment.Center)
-                .border(1.dp, Color.White)
-        )
+            Spacer(modifier = Modifier.height(8.dp))
+
+            Text(
+                text = "Put your hands in front of the camera",
+                color = Color.White,
+                fontSize = 18.sp,
+                fontWeight = FontWeight.SemiBold,
+                textAlign = TextAlign.Center
+            )
+        }
 
         Card(
             modifier = Modifier
@@ -348,7 +387,6 @@ fun DetectionScreen(
                     color = Color.Black,
                     textAlign = TextAlign.Justify
                 )
-
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.Center,
@@ -360,7 +398,6 @@ fun DetectionScreen(
                         fontSize = 28.sp,
                         color = Color.Black
                     )
-
                     if (showCheck) {
                         Spacer(modifier = Modifier.width(8.dp))
                         Icon(
@@ -376,11 +413,8 @@ fun DetectionScreen(
     }
 }
 
-
 @Composable
-fun LessonCompletionScreen(
-    onNextCourse: () -> Unit
-) {
+fun LessonCompletionScreen(onNextCourse: () -> Unit) {
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -443,6 +477,6 @@ fun LessonCompletionScreen(
 
 @Preview(showBackground = true)
 @Composable
-fun PreviewLearnScreen() {
-    LearnScreen()
+fun PreviewLearnApp() {
+    LearnApp()
 }
