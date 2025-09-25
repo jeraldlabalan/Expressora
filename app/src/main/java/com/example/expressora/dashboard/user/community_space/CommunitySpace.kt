@@ -32,6 +32,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
@@ -65,6 +67,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
@@ -212,20 +215,11 @@ fun CommunitySpaceScreen() {
                     id = 2,
                     author = "Azealia Banks",
                     avatarRes = R.drawable.azealia_banks,
-                    content = "Iggy Azalea is like my albino child...",
+                    content = "Iggy Azalea is like my albino child I gave birth to in a pre-historic African village during Pangea",
                     imageUris = listOf(Uri.parse("https://static.scientificamerican.com/sciam/cache/file/3A647477-C180-4D23-B4265C83F4906F2A_source.jpg?w=600")),
                     likes = 5,
                     comments = mutableListOf(),
                     timestamp = System.currentTimeMillis() - 1000 * 60 * 60 * 5
-                ), Post(
-                    id = 3,
-                    author = "LOONA",
-                    avatarRes = R.drawable.loona,
-                    content = "Bye",
-                    videoUris = listOf(Uri.parse("https://www.learningcontainer.com/wp-content/uploads/2020/05/sample-mp4-file.mp4")),
-                    likes = 1,
-                    comments = mutableListOf(),
-                    timestamp = System.currentTimeMillis() - 1000 * 60 * 60 * 24
                 )
             )
         )
@@ -258,7 +252,7 @@ fun CommunitySpaceScreen() {
     var showEditCommentDialog by remember { mutableStateOf(false) }
 
     var showDeletePostId by remember { mutableStateOf<Int?>(null) }
-    var showDeleteCommentPair by remember { mutableStateOf<Pair<Int, Int>?>(null) } // Pair(postId, commentId)
+    var showDeleteCommentPair by remember { mutableStateOf<Pair<Int, Int>?>(null) }
 
     fun deletePost(postId: Int) {
         posts = posts.filter { it.id != postId }
@@ -637,6 +631,7 @@ fun PostCard(
         shape = RoundedCornerShape(16.dp)
     ) {
         Column(modifier = Modifier.padding(12.dp)) {
+
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -726,52 +721,113 @@ fun PostCard(
                 }
             }
 
-            post.imageUris.forEach { uri ->
-                Spacer(Modifier.height(8.dp))
-                AsyncImage(
-                    model = uri,
-                    contentDescription = "Post Image",
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(180.dp)
-                        .clip(RoundedCornerShape(12.dp))
-                        .clickable { onImageClick(uri) },
-                    contentScale = ContentScale.Crop
-                )
-            }
+            val mediaUris = post.imageUris.map { it to true } + post.videoUris.map { it to false }
 
-            post.videoUris.forEach { uri ->
+            if (mediaUris.isNotEmpty()) {
                 Spacer(Modifier.height(8.dp))
-                val context = LocalContext.current
-                val thumbnail = remember(uri) { getVideoThumbnail(uri, context) }
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(180.dp)
-                        .clip(RoundedCornerShape(12.dp))
-                        .clickable { onVideoClick(uri) },
-                    contentAlignment = Alignment.Center
-                ) {
-                    if (thumbnail != null) {
-                        Image(
-                            bitmap = thumbnail.asImageBitmap(),
-                            contentDescription = "Video Thumbnail",
-                            contentScale = ContentScale.Crop,
-                            modifier = Modifier.fillMaxSize()
-                        )
-                    } else {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .background(Color.Black)
+
+                when {
+                    mediaUris.size == 1 -> {
+                        val (uri, isImage) = mediaUris.first()
+                        MediaItem(
+                            uri,
+                            isImage,
+                            Modifier
+                                .fillMaxWidth()
+                                .height(180.dp)
+                                .clip(RoundedCornerShape(12.dp)),
+                            onImageClick,
+                            onVideoClick
                         )
                     }
-                    Icon(
-                        Icons.Default.PlayArrow,
-                        contentDescription = "Play",
-                        tint = Color.White,
-                        modifier = Modifier.size(48.dp)
-                    )
+
+                    mediaUris.size == 2 -> {
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            mediaUris.forEach { (uri, isImage) ->
+                                MediaItem(
+                                    uri,
+                                    isImage,
+                                    Modifier
+                                        .weight(1f)
+                                        .height(180.dp)
+                                        .clip(RoundedCornerShape(12.dp)),
+                                    onImageClick,
+                                    onVideoClick
+                                )
+                            }
+                        }
+                    }
+
+                    else -> {
+                        val remainingMedia = mediaUris.size - 2
+                        val scrollState = rememberLazyListState()
+
+                        LazyRow(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp), state = scrollState
+                        ) {
+
+                            itemsIndexed(mediaUris.take(2)) { index, item ->
+                                val (uri, isImage) = item
+                                Box(
+                                    modifier = Modifier
+                                        .width(180.dp)
+                                        .height(180.dp)
+                                        .clip(RoundedCornerShape(12.dp))
+                                        .clickable {
+                                            if (isImage) onImageClick(uri) else onVideoClick(uri)
+                                        }, contentAlignment = Alignment.Center
+                                ) {
+                                    MediaContent(uri, isImage)
+
+                                    if (index == 1) {
+                                        val showOverlay by remember {
+                                            derivedStateOf {
+                                                val visibleIndices =
+                                                    scrollState.layoutInfo.visibleItemsInfo.map { it.index }
+                                                val remainingVisible =
+                                                    (2 until mediaUris.size).any { it in visibleIndices }
+                                                !remainingVisible
+                                            }
+                                        }
+                                        if (showOverlay) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .fillMaxSize()
+                                                    .background(Color.Black.copy(alpha = 0.5f))
+                                                    .clip(RoundedCornerShape(12.dp)),
+                                                contentAlignment = Alignment.Center
+                                            ) {
+                                                Text(
+                                                    "+$remainingMedia",
+                                                    color = Color.White,
+                                                    fontSize = 24.sp,
+                                                    fontWeight = FontWeight.Bold
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            items(mediaUris.drop(2)) { item ->
+                                val (uri, isImage) = item
+                                Box(
+                                    modifier = Modifier
+                                        .width(180.dp)
+                                        .height(180.dp)
+                                        .clip(RoundedCornerShape(12.dp))
+                                        .clickable {
+                                            if (isImage) onImageClick(uri) else onVideoClick(uri)
+                                        }, contentAlignment = Alignment.Center
+                                ) {
+                                    MediaContent(uri, isImage)
+                                }
+                            }
+                        }
+                    }
                 }
             }
 
@@ -850,7 +906,7 @@ fun PostCard(
                                 }
                             }
 
-                            if (comment.author == "Jennie Kim") {
+                            if (comment.author == currentUser) {
                                 Row {
                                     IconButton(onClick = { onEditComment(comment) }) {
                                         Icon(
@@ -904,6 +960,53 @@ fun PostCard(
     }
 }
 
+
+@Composable
+fun MediaItem(
+    uri: Uri,
+    isImage: Boolean,
+    modifier: Modifier = Modifier,
+    onImageClick: (Uri) -> Unit,
+    onVideoClick: (Uri) -> Unit
+) {
+    Box(
+        modifier = modifier.clickable { if (isImage) onImageClick(uri) else onVideoClick(uri) },
+        contentAlignment = Alignment.Center
+    ) {
+        MediaContent(uri, isImage)
+    }
+}
+
+@Composable
+fun MediaContent(uri: Uri, isImage: Boolean) {
+    if (isImage) {
+        AsyncImage(
+            model = uri,
+            contentDescription = "Image",
+            contentScale = ContentScale.Crop,
+            modifier = Modifier.fillMaxSize()
+        )
+    } else {
+        val context = LocalContext.current
+        val thumbnail = remember(uri) { getVideoThumbnail(uri, context) }
+        if (thumbnail != null) {
+            Image(
+                bitmap = thumbnail.asImageBitmap(),
+                contentDescription = "Video",
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize()
+            )
+        }
+        Icon(
+            Icons.Default.PlayArrow,
+            contentDescription = "Play",
+            tint = Color.White,
+            modifier = Modifier.size(48.dp)
+        )
+    }
+}
+
+
 @Composable
 fun CreatePostDialog(
     newPostText: String,
@@ -952,50 +1055,41 @@ fun CreatePostDialog(
                 Spacer(Modifier.height(12.dp))
 
                 if (tempMedia.isNotEmpty()) {
-                    Column {
-                        tempMedia.chunked(2).forEach { rowItems ->
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        items(tempMedia.size) { index ->
+                            val media = tempMedia[index]
+                            Box(
+                                modifier = Modifier
+                                    .width(180.dp)
+                                    .height(180.dp)
+                                    .clip(RoundedCornerShape(12.dp)),
+                                contentAlignment = Alignment.Center
                             ) {
-                                rowItems.forEach { media ->
-                                    Box(
-                                        modifier = Modifier
-                                            .weight(1f)
-                                            .height(180.dp)
-                                            .clip(RoundedCornerShape(12.dp)),
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        when (media) {
-                                            is TempMedia.Image -> AsyncImage(
-                                                model = media.uri,
-                                                contentDescription = "Image Preview",
-                                                contentScale = ContentScale.Crop,
-                                                modifier = Modifier.fillMaxSize()
-                                            )
+                                when (media) {
+                                    is TempMedia.Image -> AsyncImage(
+                                        model = media.uri,
+                                        contentDescription = "Image Preview",
+                                        contentScale = ContentScale.Crop,
+                                        modifier = Modifier.fillMaxSize()
+                                    )
 
-                                            is TempMedia.Video -> VideoPreviewThumbnail(uri = media.uri)
-                                        }
-
-                                        IconButton(
-                                            onClick = { onRemoveMedia(media) },
-                                            modifier = Modifier
-                                                .align(Alignment.TopEnd)
-                                                .size(24.dp)
-                                                .background(
-                                                    Color.Black.copy(alpha = 0.5f), CircleShape
-                                                )
-                                        ) {
-                                            Icon(
-                                                Icons.Default.Close,
-                                                contentDescription = "Remove",
-                                                tint = Color.White,
-                                                modifier = Modifier.size(16.dp)
-                                            )
-                                        }
-                                    }
+                                    is TempMedia.Video -> VideoPreviewThumbnail(uri = media.uri)
                                 }
-                                if (rowItems.size < 2) Spacer(modifier = Modifier.weight(1f))
+
+                                IconButton(
+                                    onClick = { onRemoveMedia(media) },
+                                    modifier = Modifier
+                                        .align(Alignment.TopEnd)
+                                        .size(24.dp)
+                                        .background(Color.Black.copy(alpha = 0.5f), CircleShape)
+                                ) {
+                                    Icon(
+                                        Icons.Default.Close,
+                                        contentDescription = "Remove",
+                                        tint = Color.White,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
                             }
                         }
                     }
@@ -1029,13 +1123,10 @@ fun CreatePostDialog(
 
                     Row {
                         TextButton(
-                            onClick = onDismiss, colors = ButtonDefaults.textButtonColors(
-                                contentColor = Color.Gray
-                            )
+                            onClick = onDismiss,
+                            colors = ButtonDefaults.textButtonColors(contentColor = Color.Gray)
                         ) {
-                            Text(
-                                "Cancel", color = Color(0xFF666666)
-                            )
+                            Text("Cancel", color = Color(0xFF666666))
                         }
                         Button(
                             onClick = onPost, colors = ButtonDefaults.buttonColors(
@@ -1070,6 +1161,8 @@ fun EditPostDialog(
         rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
             uri?.let { updatedMedia.add(TempMedia.Video(it)) }
         }
+
+    val isSaveEnabled = updatedText.isNotBlank() || updatedMedia.isNotEmpty()
 
     Dialog(onDismissRequest = onDismiss) {
         Surface(
@@ -1108,50 +1201,41 @@ fun EditPostDialog(
                 Spacer(Modifier.height(12.dp))
 
                 if (updatedMedia.isNotEmpty()) {
-                    Column {
-                        updatedMedia.chunked(2).forEach { rowItems ->
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        items(updatedMedia.size) { index ->
+                            val media = updatedMedia[index]
+                            Box(
+                                modifier = Modifier
+                                    .width(180.dp)
+                                    .height(180.dp)
+                                    .clip(RoundedCornerShape(12.dp)),
+                                contentAlignment = Alignment.Center
                             ) {
-                                rowItems.forEach { media ->
-                                    Box(
-                                        modifier = Modifier
-                                            .weight(1f)
-                                            .height(180.dp)
-                                            .clip(RoundedCornerShape(12.dp)),
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        when (media) {
-                                            is TempMedia.Image -> AsyncImage(
-                                                model = media.uri,
-                                                contentDescription = "Image",
-                                                contentScale = ContentScale.Crop,
-                                                modifier = Modifier.fillMaxSize()
-                                            )
+                                when (media) {
+                                    is TempMedia.Image -> AsyncImage(
+                                        model = media.uri,
+                                        contentDescription = "Image",
+                                        contentScale = ContentScale.Crop,
+                                        modifier = Modifier.fillMaxSize()
+                                    )
 
-                                            is TempMedia.Video -> VideoPreviewThumbnail(uri = media.uri)
-                                        }
-
-                                        IconButton(
-                                            onClick = { updatedMedia.remove(media) },
-                                            modifier = Modifier
-                                                .align(Alignment.TopEnd)
-                                                .size(24.dp)
-                                                .background(
-                                                    Color.Black.copy(alpha = 0.5f), CircleShape
-                                                )
-                                        ) {
-                                            Icon(
-                                                Icons.Default.Close,
-                                                contentDescription = "Remove",
-                                                tint = Color.White,
-                                                modifier = Modifier.size(16.dp)
-                                            )
-                                        }
-                                    }
+                                    is TempMedia.Video -> VideoPreviewThumbnail(uri = media.uri)
                                 }
-                                if (rowItems.size < 2) Spacer(modifier = Modifier.weight(1f))
+
+                                IconButton(
+                                    onClick = { updatedMedia.remove(media) },
+                                    modifier = Modifier
+                                        .align(Alignment.TopEnd)
+                                        .size(24.dp)
+                                        .background(Color.Black.copy(alpha = 0.5f), CircleShape)
+                                ) {
+                                    Icon(
+                                        Icons.Default.Close,
+                                        contentDescription = "Remove",
+                                        tint = Color.White,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
                             }
                         }
                     }
@@ -1185,19 +1269,19 @@ fun EditPostDialog(
 
                     Row {
                         TextButton(
-                            onClick = onDismiss, colors = ButtonDefaults.textButtonColors(
-                                contentColor = Color.Gray
-                            )
+                            onClick = onDismiss,
+                            colors = ButtonDefaults.textButtonColors(contentColor = Color.Gray)
                         ) {
-                            Text(
-                                "Cancel", color = Color(0xFF666666)
-                            )
+                            Text("Cancel", color = Color(0xFF666666))
                         }
                         Spacer(Modifier.width(8.dp))
                         Button(
                             onClick = { onSave(updatedText, updatedMedia.toList()) },
+                            enabled = isSaveEnabled,
                             colors = ButtonDefaults.buttonColors(
-                                containerColor = Color(0xFFFACC15), contentColor = Color.Black
+                                containerColor = if (isSaveEnabled) Color(0xFFFACC15) else Color(
+                                    0xFFEEEEEE
+                                ), contentColor = if (isSaveEnabled) Color.Black else Color.Gray
                             )
                         ) {
                             Text("Save")
@@ -1209,11 +1293,14 @@ fun EditPostDialog(
     }
 }
 
+
 @Composable
 fun EditCommentDialogStyled(
     initialMessage: String, onDismiss: () -> Unit, onSave: (String) -> Unit
 ) {
     var text by remember { mutableStateOf(initialMessage) }
+
+    val isSaveEnabled = text.isNotBlank()
 
     Dialog(onDismissRequest = onDismiss) {
         Surface(
@@ -1230,6 +1317,7 @@ fun EditCommentDialogStyled(
                     fontFamily = InterFontFamily,
                     modifier = Modifier.padding(bottom = 12.dp)
                 )
+
                 OutlinedTextField(
                     value = text,
                     onValueChange = { text = it },
@@ -1249,16 +1337,25 @@ fun EditCommentDialogStyled(
                 Divider()
                 Spacer(Modifier.height(12.dp))
 
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End
+                ) {
                     TextButton(
-                        onClick = onDismiss, colors = ButtonDefaults.textButtonColors(
-                            contentColor = Color.Gray
-                        )
-                    ) { Text("Cancel", color = Color(0xFF666666)) }
+                        onClick = onDismiss,
+                        colors = ButtonDefaults.textButtonColors(contentColor = Color.Gray)
+                    ) {
+                        Text("Cancel", color = Color(0xFF666666))
+                    }
+
                     Spacer(Modifier.width(8.dp))
+
                     Button(
-                        onClick = { onSave(text) }, colors = ButtonDefaults.buttonColors(
-                            containerColor = Color(0xFFFACC15), contentColor = Color.Black
+                        onClick = { onSave(text) },
+                        enabled = isSaveEnabled,
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = if (isSaveEnabled) Color(0xFFFACC15) else Color(
+                                0xFFEEEEEE
+                            ), contentColor = if (isSaveEnabled) Color.Black else Color.Gray
                         )
                     ) {
                         Text("Save")
@@ -1268,6 +1365,7 @@ fun EditCommentDialogStyled(
         }
     }
 }
+
 
 @Composable
 fun ConfirmDeleteDialogStyled(
