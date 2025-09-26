@@ -59,19 +59,25 @@
 
 
         <!--        FOR STARTING THE SPECIFIC FILE-->
-        <!--        <activity-->
-        <!--            android:name=".dashboard.user.settings.SettingsActivity"-->
-        <!--            android:exported="true">-->
-        <!--            <intent-filter>-->
-        <!--                <action android:name="android.intent.action.MAIN" />-->
-        <!--                <category android:name="android.intent.category.LAUNCHER" />-->
-        <!--            </intent-filter>-->
-        <!--        </activity>-->
+        <activity
+            android:name=".dashboard.admin.settings.AdminSettingsActivity"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
 
 
         <!--        Admin Side-->
         <activity
-            android:name=".dashboard.admin.settings.AdminSettingsActivity"
+            android:name=".dashboard.admin.notification.NotificationActivity"
+            android:exported="false" />
+        <!--        <activity-->
+        <!--            android:name=".dashboard.admin.settings.AdminSettingsActivity"-->
+        <!--            android:exported="false" />-->
+        <activity
+            android:name=".dashboard.admin.tutorialmonitoring.TutorialMonitoringActivity"
             android:exported="false" />
 
 
@@ -81,11 +87,11 @@
             android:exported="true"
             android:label="@string/app_name"
             android:theme="@style/Theme.Expressora">
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
+            <!--            <intent-filter>-->
+            <!--                <action android:name="android.intent.action.MAIN" />-->
 
-                <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
+            <!--                <category android:name="android.intent.category.LAUNCHER" />-->
+            <!--            </intent-filter>-->
         </activity>
     </application>
 

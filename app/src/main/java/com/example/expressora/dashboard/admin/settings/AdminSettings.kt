@@ -65,6 +65,7 @@ import coil.compose.AsyncImage
 import com.example.expressora.auth.LoginActivity
 import com.example.expressora.components.bottom_nav.BottomNav
 import com.example.expressora.components.top_nav.TopNav
+import com.example.expressora.dashboard.admin.notification.NotificationActivity
 import com.example.expressora.ui.theme.InterFontFamily
 
 class AdminSettingsActivity : ComponentActivity() {
@@ -119,11 +120,15 @@ fun AdminSettingsScreen(navController: NavHostController) {
     Scaffold(
         topBar = {
             TopNav(notificationCount = 2, onProfileClick = {
-                { /* already in settings */ }
+                { /* already in admin settings */ }
             }, onTranslateClick = {
 
             }, onNotificationClick = {
-
+                context.startActivity(
+                    Intent(
+                        context, NotificationActivity::class.java
+                    )
+                )
             })
         }, bottomBar = {
             BottomNav(onLearnClick = {
@@ -233,17 +238,22 @@ fun AdminSettingsRowWithSubtitle(label: String, subtitle: String, onClick: () ->
 
 @Composable
 fun AdminAccountInfoScreen(navController: NavHostController, label: String) {
-    LocalContext.current
+    val context = LocalContext.current
     val email = "abc@proton.me"
 
     Scaffold(
         topBar = {
             TopNav(notificationCount = 2, onProfileClick = {
-                { /* already in settings */ }
+                { /* already in admin settings */ }
             }, onTranslateClick = {
 
             }, onNotificationClick = {
-
+                context.startActivity(
+                    Intent(
+                        context,
+                        NotificationActivity::class.java
+                    )
+                )
             })
         }, bottomBar = {
             BottomNav(onLearnClick = {
@@ -286,7 +296,7 @@ fun AdminUserProfileScreen(navController: NavHostController, label: String) {
     var firstName by remember { mutableStateOf("") }
     var lastName by remember { mutableStateOf("") }
     var imageUri by remember { mutableStateOf<Uri?>(null) }
-    LocalContext.current
+    val context = LocalContext.current
 
     val imagePickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
@@ -295,11 +305,16 @@ fun AdminUserProfileScreen(navController: NavHostController, label: String) {
     Scaffold(
         topBar = {
             TopNav(notificationCount = 2, onProfileClick = {
-                { /* already in settings */ }
+                { /* already in admin settings */ }
             }, onTranslateClick = {
 
             }, onNotificationClick = {
-
+                context.startActivity(
+                    Intent(
+                        context,
+                        NotificationActivity::class.java
+                    )
+                )
             })
         }, bottomBar = {
             BottomNav(onLearnClick = {
@@ -450,17 +465,22 @@ fun AdminChangeEmailScreen(navController: NavHostController, label: String) {
     var newEmail by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
     var passwordVisible by remember { mutableStateOf(false) }
-    LocalContext.current
+    val context = LocalContext.current
     val textColor = Color.Black
 
     Scaffold(
         topBar = {
             TopNav(notificationCount = 2, onProfileClick = {
-                { /* already in settings */ }
+                { /* already in admin settings */ }
             }, onTranslateClick = {
 
             }, onNotificationClick = {
-
+                context.startActivity(
+                    Intent(
+                        context,
+                        NotificationActivity::class.java
+                    )
+                )
             })
         }, bottomBar = {
             BottomNav(onLearnClick = {
@@ -574,17 +594,22 @@ fun AdminChangePasswordScreen(navController: NavHostController, label: String) {
     var newPasswordVisible by remember { mutableStateOf(false) }
     var confirmPasswordVisible by remember { mutableStateOf(false) }
 
-    LocalContext.current
+    val context = LocalContext.current
     val textColor = Color.Black
 
     Scaffold(
         topBar = {
             TopNav(notificationCount = 2, onProfileClick = {
-                { /* already in settings */ }
+                { /* already in admin settings */ }
             }, onTranslateClick = {
 
             }, onNotificationClick = {
-
+                context.startActivity(
+                    Intent(
+                        context,
+                        NotificationActivity::class.java
+                    )
+                )
             })
         }, bottomBar = {
             BottomNav(onLearnClick = {
