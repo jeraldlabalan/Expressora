@@ -48,8 +48,8 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import coil.compose.AsyncImage
 import com.example.expressora.R
-import com.example.expressora.components.bottom_nav.BottomNav
 import com.example.expressora.components.top_nav3.TopNav3
+import com.example.expressora.components.user_bottom_nav.BottomNav
 import com.example.expressora.dashboard.user.community_space.CommunitySpaceActivity
 import com.example.expressora.dashboard.user.learn.LearnActivity
 import com.example.expressora.dashboard.user.translation.TranslationActivity

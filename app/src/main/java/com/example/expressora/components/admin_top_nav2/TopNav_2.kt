@@ -1,4 +1,4 @@
-package com.example.expressora.components.top_nav_2
+package com.example.expressora.components.admin_top_nav2
 
 import android.content.Intent
 import androidx.compose.foundation.background

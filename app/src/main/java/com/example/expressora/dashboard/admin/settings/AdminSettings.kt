@@ -63,10 +63,13 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import coil.compose.AsyncImage
 import com.example.expressora.auth.LoginActivity
-import com.example.expressora.components.bottom_nav.BottomNav
+import com.example.expressora.components.admin_bottom_nav.BottomNav2
 import com.example.expressora.components.top_nav.TopNav
+import com.example.expressora.dashboard.admin.analytics.AnalyticsDashboardActivity
 import com.example.expressora.dashboard.admin.communityspacemanagement.CommunitySpaceManagementActivity
+import com.example.expressora.dashboard.admin.learningmanagement.LearningManagementActivity
 import com.example.expressora.dashboard.admin.notification.NotificationActivity
+import com.example.expressora.dashboard.admin.quizmanagement.QuizManagementActivity
 import com.example.expressora.ui.theme.InterFontFamily
 
 class AdminSettingsActivity : ComponentActivity() {
@@ -87,7 +90,7 @@ class AdminSettingsActivity : ComponentActivity() {
                     if (label == "Account Information") {
                         AdminAccountInfoScreen(navController, label)
                     } else {
-                        AdminUserProfileScreen(navController, label)
+                        AdminUserProfileScreen(label)
                     }
                 }
 
@@ -96,7 +99,7 @@ class AdminSettingsActivity : ComponentActivity() {
                     arguments = listOf(navArgument("label") { defaultValue = "Change Email" })
                 ) { backStackEntry ->
                     val label = backStackEntry.arguments?.getString("label") ?: "Change Email"
-                    AdminChangeEmailScreen(navController, label)
+                    AdminChangeEmailScreen(label)
                 }
 
                 composable(
@@ -104,7 +107,7 @@ class AdminSettingsActivity : ComponentActivity() {
                     arguments = listOf(navArgument("label") { defaultValue = "Change Password" })
                 ) { backStackEntry ->
                     val label = backStackEntry.arguments?.getString("label") ?: "Change Password"
-                    AdminChangePasswordScreen(navController, label)
+                    AdminChangePasswordScreen(label)
                 }
             }
         }
@@ -123,7 +126,11 @@ fun AdminSettingsScreen(navController: NavHostController) {
             TopNav(notificationCount = 2, onProfileClick = {
                 { /* already in admin settings */ }
             }, onTranslateClick = {
-
+                context.startActivity(
+                    Intent(
+                        context, CommunitySpaceManagementActivity::class.java
+                    )
+                )
             }, onNotificationClick = {
                 context.startActivity(
                     Intent(
@@ -132,12 +139,24 @@ fun AdminSettingsScreen(navController: NavHostController) {
                 )
             })
         }, bottomBar = {
-            BottomNav(onLearnClick = {
-
-            }, onCameraClick = {
-
+            BottomNav2(onLearnClick = {
+                context.startActivity(
+                    Intent(
+                        context, LearningManagementActivity::class.java
+                    )
+                )
+            }, onAnalyticsClick = {
+                context.startActivity(
+                    Intent(
+                        context, AnalyticsDashboardActivity::class.java
+                    )
+                )
             }, onQuizClick = {
-
+                context.startActivity(
+                    Intent(
+                        context, QuizManagementActivity::class.java
+                    )
+                )
             })
         }, containerColor = Color(0xFFF8F8F8)
     ) { paddingValues ->
@@ -260,12 +279,24 @@ fun AdminAccountInfoScreen(navController: NavHostController, label: String) {
                 )
             })
         }, bottomBar = {
-            BottomNav(onLearnClick = {
-
-            }, onCameraClick = {
-
+            BottomNav2(onLearnClick = {
+                context.startActivity(
+                    Intent(
+                        context, LearningManagementActivity::class.java
+                    )
+                )
+            }, onAnalyticsClick = {
+                context.startActivity(
+                    Intent(
+                        context, AnalyticsDashboardActivity::class.java
+                    )
+                )
             }, onQuizClick = {
-
+                context.startActivity(
+                    Intent(
+                        context, QuizManagementActivity::class.java
+                    )
+                )
             })
         }, containerColor = Color(0xFFF8F8F8)
     ) { paddingValues ->
@@ -296,7 +327,7 @@ fun AdminAccountInfoScreen(navController: NavHostController, label: String) {
 }
 
 @Composable
-fun AdminUserProfileScreen(navController: NavHostController, label: String) {
+fun AdminUserProfileScreen(label: String) {
     var firstName by remember { mutableStateOf("") }
     var lastName by remember { mutableStateOf("") }
     var imageUri by remember { mutableStateOf<Uri?>(null) }
@@ -311,7 +342,11 @@ fun AdminUserProfileScreen(navController: NavHostController, label: String) {
             TopNav(notificationCount = 2, onProfileClick = {
                 { /* already in admin settings */ }
             }, onTranslateClick = {
-
+                context.startActivity(
+                    Intent(
+                        context, CommunitySpaceManagementActivity::class.java
+                    )
+                )
             }, onNotificationClick = {
                 context.startActivity(
                     Intent(
@@ -320,12 +355,24 @@ fun AdminUserProfileScreen(navController: NavHostController, label: String) {
                 )
             })
         }, bottomBar = {
-            BottomNav(onLearnClick = {
-
-            }, onCameraClick = {
-
+            BottomNav2(onLearnClick = {
+                context.startActivity(
+                    Intent(
+                        context, LearningManagementActivity::class.java
+                    )
+                )
+            }, onAnalyticsClick = {
+                context.startActivity(
+                    Intent(
+                        context, AnalyticsDashboardActivity::class.java
+                    )
+                )
             }, onQuizClick = {
-
+                context.startActivity(
+                    Intent(
+                        context, QuizManagementActivity::class.java
+                    )
+                )
             })
         }, containerColor = Color(0xFFF8F8F8)
     ) { paddingValues ->
@@ -464,7 +511,7 @@ fun AdminUserProfileScreen(navController: NavHostController, label: String) {
 }
 
 @Composable
-fun AdminChangeEmailScreen(navController: NavHostController, label: String) {
+fun AdminChangeEmailScreen(label: String) {
     var newEmail by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
     var passwordVisible by remember { mutableStateOf(false) }
@@ -476,7 +523,11 @@ fun AdminChangeEmailScreen(navController: NavHostController, label: String) {
             TopNav(notificationCount = 2, onProfileClick = {
                 { /* already in admin settings */ }
             }, onTranslateClick = {
-
+                context.startActivity(
+                    Intent(
+                        context, CommunitySpaceManagementActivity::class.java
+                    )
+                )
             }, onNotificationClick = {
                 context.startActivity(
                     Intent(
@@ -485,11 +536,25 @@ fun AdminChangeEmailScreen(navController: NavHostController, label: String) {
                 )
             })
         }, bottomBar = {
-            BottomNav(onLearnClick = {
-
-            }, onCameraClick = {
-
-            }, onQuizClick = { })
+            BottomNav2(onLearnClick = {
+                context.startActivity(
+                    Intent(
+                        context, LearningManagementActivity::class.java
+                    )
+                )
+            }, onAnalyticsClick = {
+                context.startActivity(
+                    Intent(
+                        context, AnalyticsDashboardActivity::class.java
+                    )
+                )
+            }, onQuizClick = {
+                context.startActivity(
+                    Intent(
+                        context, QuizManagementActivity::class.java
+                    )
+                )
+            })
         }, containerColor = Color(0xFFF8F8F8)
     ) { paddingValues ->
         Box(
@@ -587,7 +652,7 @@ fun AdminChangeEmailScreen(navController: NavHostController, label: String) {
 }
 
 @Composable
-fun AdminChangePasswordScreen(navController: NavHostController, label: String) {
+fun AdminChangePasswordScreen(label: String) {
     var currentPassword by remember { mutableStateOf("") }
     var newPassword by remember { mutableStateOf("") }
     var confirmPassword by remember { mutableStateOf("") }
@@ -604,7 +669,11 @@ fun AdminChangePasswordScreen(navController: NavHostController, label: String) {
             TopNav(notificationCount = 2, onProfileClick = {
                 { /* already in admin settings */ }
             }, onTranslateClick = {
-
+                context.startActivity(
+                    Intent(
+                        context, CommunitySpaceManagementActivity::class.java
+                    )
+                )
             }, onNotificationClick = {
                 context.startActivity(
                     Intent(
@@ -613,11 +682,25 @@ fun AdminChangePasswordScreen(navController: NavHostController, label: String) {
                 )
             })
         }, bottomBar = {
-            BottomNav(onLearnClick = {
-
-            }, onCameraClick = {
-
-            }, onQuizClick = { })
+            BottomNav2(onLearnClick = {
+                context.startActivity(
+                    Intent(
+                        context, LearningManagementActivity::class.java
+                    )
+                )
+            }, onAnalyticsClick = {
+                context.startActivity(
+                    Intent(
+                        context, AnalyticsDashboardActivity::class.java
+                    )
+                )
+            }, onQuizClick = {
+                context.startActivity(
+                    Intent(
+                        context, QuizManagementActivity::class.java
+                    )
+                )
+            })
         }, containerColor = Color(0xFFF8F8F8)
     ) { paddingValues ->
         Box(
@@ -764,6 +847,5 @@ fun PreviewAccountInfoScreen() {
 @Preview(showBackground = true)
 @Composable
 fun PreviewProfileScreen() {
-    val navController = rememberNavController()
-    AdminUserProfileScreen(navController, "Personal Information")
+    AdminUserProfileScreen("Personal Information")
 }

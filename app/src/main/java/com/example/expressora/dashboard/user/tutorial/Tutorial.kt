@@ -57,9 +57,9 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.expressora.R
-import com.example.expressora.components.bottom_nav.BottomNav
 import com.example.expressora.components.top_nav.TopNav
-import com.example.expressora.components.top_nav2.TopTabNav2
+import com.example.expressora.components.user_bottom_nav.BottomNav
+import com.example.expressora.components.user_top_nav2.TopTabNav2
 import com.example.expressora.dashboard.user.learn.LearnActivity
 import com.example.expressora.dashboard.user.notification.NotificationActivity
 import com.example.expressora.dashboard.user.quiz.QuizActivity

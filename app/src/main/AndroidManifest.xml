@@ -11,6 +11,9 @@
     <!-- Camera permission -->
     <uses-permission android:name="android.permission.CAMERA" />
 
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
+
+
     <application
         android:allowBackup="true"
         android:dataExtractionRules="@xml/data_extraction_rules"
@@ -48,10 +51,10 @@
             android:name=".dashboard.user.quiz.QuizActivity"
             android:exported="false" />
         <activity
-            android:name=".dashboard.user.translation.TranslationActivity"
+            android:name=".dashboard.user.settings.SettingsActivity"
             android:exported="false" />
         <activity
-            android:name=".dashboard.user.settings.SettingsActivity"
+            android:name=".dashboard.user.translation.TranslationActivity"
             android:exported="false" />
         <activity
             android:name=".dashboard.user.tutorial.TutorialActivity"
@@ -60,7 +63,7 @@
 
         <!--        FOR STARTING THE SPECIFIC FILE-->
         <activity
-            android:name=".dashboard.admin.communityspacemanagement.CommunitySpaceManagementActivity"
+            android:name=".dashboard.admin.analytics.AnalyticsDashboardActivity"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -71,10 +74,19 @@
 
         <!--        Admin Side-->
         <!--        <activity-->
-        <!--            android:name=".dashboard.admin.communityspacemanagement.CommunitySpaceManagementActivity"-->
+        <!--            android:name=".dashboard.admin.analytics.AnalyticsDashboardActivity"-->
         <!--            android:exported="false" />-->
         <activity
+            android:name=".dashboard.admin.communityspacemanagement.CommunitySpaceManagementActivity"
+            android:exported="false" />
+        <activity
+            android:name=".dashboard.admin.learningmanagement.LearningManagementActivity"
+            android:exported="false" />
+        <activity
             android:name=".dashboard.admin.notification.NotificationActivity"
+            android:exported="false" />
+        <activity
+            android:name=".dashboard.admin.quizmanagement.QuizManagementActivity"
             android:exported="false" />
         <activity
             android:name=".dashboard.admin.settings.AdminSettingsActivity"

@@ -1,18 +1,24 @@
-package com.example.expressora.components.bottom_nav
+package com.example.expressora.components.admin_bottom_nav
 
 import android.content.Intent
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
@@ -22,16 +28,16 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.expressora.R
-import com.example.expressora.dashboard.user.learn.LearnActivity
-import com.example.expressora.dashboard.user.quiz.QuizActivity
-import com.example.expressora.dashboard.user.translation.TranslationActivity
+import com.example.expressora.dashboard.admin.analytics.AnalyticsDashboardActivity
+import com.example.expressora.dashboard.admin.learningmanagement.LearningManagementActivity
+import com.example.expressora.dashboard.admin.quizmanagement.QuizManagementActivity
 import com.example.expressora.ui.theme.InterFontFamily
 
 @Composable
-fun BottomNav(
+fun BottomNav2(
     modifier: Modifier = Modifier,
     onLearnClick: () -> Unit,
-    onCameraClick: () -> Unit,
+    onAnalyticsClick: () -> Unit,
     onQuizClick: () -> Unit
 ) {
     Box(
@@ -42,16 +48,14 @@ fun BottomNav(
                 Color(0xFFFDE58A), shape = RoundedCornerShape(topStart = 0.dp, topEnd = 0.dp)
             )
     ) {
-
         Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .fillMaxHeight()
                 .padding(horizontal = 32.dp),
-            horizontalArrangement = Arrangement.SpaceEvenly,
+            horizontalArrangement = Arrangement.SpaceAround,
             verticalAlignment = Alignment.CenterVertically
         ) {
-
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 modifier = Modifier.clickable { onLearnClick() }) {
@@ -71,8 +75,24 @@ fun BottomNav(
                 )
             }
 
-
-            Spacer(modifier = Modifier.width(72.dp))
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                modifier = Modifier.clickable { onAnalyticsClick() }) {
+                Image(
+                    painter = painterResource(id = R.drawable.analytics),
+                    contentDescription = "Analytics",
+                    modifier = Modifier.size(30.dp),
+                    colorFilter = androidx.compose.ui.graphics.ColorFilter.tint(Color.Black)
+                )
+                Text(
+                    text = "Analytics",
+                    fontSize = 14.sp,
+                    color = Color.Black,
+                    textAlign = TextAlign.Center,
+                    fontFamily = InterFontFamily,
+                    fontWeight = FontWeight.Bold
+                )
+            }
 
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
@@ -89,41 +109,7 @@ fun BottomNav(
                     color = Color.Black,
                     textAlign = TextAlign.Center,
                     fontFamily = InterFontFamily,
-                    fontWeight = FontWeight.Bold,
-                )
-            }
-        }
-
-
-        Box(
-            modifier = Modifier
-                .align(Alignment.TopCenter)
-                .offset(y = (-30).dp)
-                .size(75.dp)
-                .clip(CircleShape)
-                .background(Color(0xFFF8F8F8)),
-            contentAlignment = Alignment.Center
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(70.dp)
-                    .clip(CircleShape)
-                    .background(
-                        brush = Brush.linearGradient(
-                            colorStops = arrayOf(
-                                0.0f to Color(0xFFFDE58A),
-                                0.999f to Color(0xFFFACC15),
-                            )
-                        )
-                    )
-
-                    .clickable { onCameraClick() }, contentAlignment = Alignment.Center
-            ) {
-                Image(
-                    painter = painterResource(id = R.drawable.camera),
-                    contentDescription = "Camera",
-                    modifier = Modifier.size(37.dp),
-                    colorFilter = androidx.compose.ui.graphics.ColorFilter.tint(Color.Black)
+                    fontWeight = FontWeight.Bold
                 )
             }
         }
@@ -132,20 +118,16 @@ fun BottomNav(
 
 @Preview(showBackground = true)
 @Composable
-fun BottomNavBarPreview() {
+fun BottomNav2BarPreview() {
     val context = LocalContext.current
 
     Box(modifier = Modifier.fillMaxSize()) {
-        BottomNav(
-            modifier = Modifier.align(Alignment.BottomCenter),
-            onLearnClick = {
-                context.startActivity(Intent(context, LearnActivity::class.java))
-            },
-            onCameraClick = {
-                context.startActivity(Intent(context, TranslationActivity::class.java))
-            },
-            onQuizClick = {
-                context.startActivity(Intent(context, QuizActivity::class.java))
-            })
+        BottomNav2(modifier = Modifier.align(Alignment.BottomCenter), onLearnClick = {
+            context.startActivity(Intent(context, LearningManagementActivity::class.java))
+        }, onAnalyticsClick = {
+            context.startActivity(Intent(context, AnalyticsDashboardActivity::class.java))
+        }, onQuizClick = {
+            context.startActivity(Intent(context, QuizManagementActivity::class.java))
+        })
     }
 }

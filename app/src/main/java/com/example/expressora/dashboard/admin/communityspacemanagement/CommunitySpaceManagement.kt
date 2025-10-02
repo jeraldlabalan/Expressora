@@ -121,10 +121,13 @@ import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import coil.compose.AsyncImage
 import com.example.expressora.R
-import com.example.expressora.components.bottom_nav.BottomNav
+import com.example.expressora.components.admin_bottom_nav.BottomNav2
+import com.example.expressora.components.admin_top_nav2.TopTabNav_2
 import com.example.expressora.components.top_nav.TopNav
-import com.example.expressora.components.top_nav_2.TopTabNav_2
+import com.example.expressora.dashboard.admin.analytics.AnalyticsDashboardActivity
+import com.example.expressora.dashboard.admin.learningmanagement.LearningManagementActivity
 import com.example.expressora.dashboard.admin.notification.NotificationActivity
+import com.example.expressora.dashboard.admin.quizmanagement.QuizManagementActivity
 import com.example.expressora.dashboard.admin.settings.AdminSettingsActivity
 import com.example.expressora.ui.theme.InterFontFamily
 import com.google.accompanist.swiperefresh.SwipeRefresh
@@ -344,89 +347,106 @@ fun CommunitySpaceManagementScreen() {
         }
     }
 
-    Scaffold(
-        topBar = {
-            Column {
-                TopNav(
-                    notificationCount = 2,
-                    onProfileClick = {
-                        context.startActivity(
-                            Intent(
-                                context, AdminSettingsActivity::class.java
-                            )
+    Scaffold(topBar = {
+        Column {
+            TopNav(
+                notificationCount = 2,
+                onProfileClick = {
+                    context.startActivity(
+                        Intent(
+                            context, AdminSettingsActivity::class.java
                         )
-                    },
-                    onTranslateClick = { { /* already in community space management */ } },
-                    onNotificationClick = {
-                        context.startActivity(
-                            Intent(
-                                context, NotificationActivity::class.java
-                            )
-                        )
-                    })
-                var selectedTab by remember { mutableStateOf(0) }
-                TopTabNav_2(selectedTab = selectedTab, onTabSelected = { selectedTab = it })
-
-                OutlinedTextField(
-                    value = searchQuery,
-                    onValueChange = { searchQuery = it },
-                    placeholder = { Text("Search posts", color = Color(0xFF666666)) },
-                    leadingIcon = {
-                        Icon(
-                            Icons.Default.Search, contentDescription = "Search", tint = Color.Black
-                        )
-                    },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 24.dp, vertical = 12.dp)
-                        .clip(RoundedCornerShape(50))
-                        .background(Color.White, RoundedCornerShape(50))
-                        .shadow(2.dp, RoundedCornerShape(50)),
-                    singleLine = true,
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = Color.Transparent,
-                        unfocusedBorderColor = Color.Transparent,
-                        focusedTextColor = Color.Black,
-                        unfocusedTextColor = Color(0xFF666666),
-                        cursorColor = Color.Black,
-                        focusedContainerColor = Color.White,
-                        unfocusedContainerColor = Color.White
                     )
-                )
-            }
-        },
-        bottomBar = { BottomNav(onLearnClick = {}, onCameraClick = {}, onQuizClick = {}) },
-        floatingActionButton = {
-            FloatingActionButton(
-                onClick = { showCreateDialog = true },
-                containerColor = Color(0xFFFACC15),
-                contentColor = Color.Black,
-                shape = CircleShape,
-                modifier = Modifier
-                    .offset {
-                        IntOffset(
-                            fabOffsetX.roundToInt(), fabOffsetY.roundToInt()
+                },
+                onTranslateClick = { { /* already in community space management */ } },
+                onNotificationClick = {
+                    context.startActivity(
+                        Intent(
+                            context, NotificationActivity::class.java
                         )
-                    }
-                    .pointerInput(Unit) {
-                        detectDragGestures { change, dragAmount ->
-                            change.consume()
-                            fabOffsetX += dragAmount.x
-                            fabOffsetY += dragAmount.y
-                        }
-                    }) {
-                Icon(
-                    Icons.Default.Add, contentDescription = "Add Post", tint = Color.Black
-                )
-            }
+                    )
+                })
+            var selectedTab by remember { mutableStateOf(0) }
+            TopTabNav_2(selectedTab = selectedTab, onTabSelected = { selectedTab = it })
 
-            LaunchedEffect(isRefreshing) {
-                if (!isRefreshing) {
-                    fabOffsetX = 0f
-                    fabOffsetY = 0f
+            OutlinedTextField(
+                value = searchQuery,
+                onValueChange = { searchQuery = it },
+                placeholder = { Text("Search posts", color = Color(0xFF666666)) },
+                leadingIcon = {
+                    Icon(
+                        Icons.Default.Search, contentDescription = "Search", tint = Color.Black
+                    )
+                },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 24.dp, vertical = 12.dp)
+                    .clip(RoundedCornerShape(50))
+                    .background(Color.White, RoundedCornerShape(50))
+                    .shadow(2.dp, RoundedCornerShape(50)),
+                singleLine = true,
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedBorderColor = Color.Transparent,
+                    unfocusedBorderColor = Color.Transparent,
+                    focusedTextColor = Color.Black,
+                    unfocusedTextColor = Color(0xFF666666),
+                    cursorColor = Color.Black,
+                    focusedContainerColor = Color.White,
+                    unfocusedContainerColor = Color.White
+                )
+            )
+        }
+    }, bottomBar = {
+        BottomNav2(onLearnClick = {
+            context.startActivity(
+                Intent(
+                    context, LearningManagementActivity::class.java
+                )
+            )
+        }, onAnalyticsClick = {
+            context.startActivity(
+                Intent(
+                    context, AnalyticsDashboardActivity::class.java
+                )
+            )
+        }, onQuizClick = {
+            context.startActivity(
+                Intent(
+                    context, QuizManagementActivity::class.java
+                )
+            )
+        })
+    }, floatingActionButton = {
+        FloatingActionButton(
+            onClick = { showCreateDialog = true },
+            containerColor = Color(0xFFFACC15),
+            contentColor = Color.Black,
+            shape = CircleShape,
+            modifier = Modifier
+                .offset {
+                    IntOffset(
+                        fabOffsetX.roundToInt(), fabOffsetY.roundToInt()
+                    )
                 }
+                .pointerInput(Unit) {
+                    detectDragGestures { change, dragAmount ->
+                        change.consume()
+                        fabOffsetX += dragAmount.x
+                        fabOffsetY += dragAmount.y
+                    }
+                }) {
+            Icon(
+                Icons.Default.Add, contentDescription = "Add Post", tint = Color.Black
+            )
+        }
+
+        LaunchedEffect(isRefreshing) {
+            if (!isRefreshing) {
+                fabOffsetX = 0f
+                fabOffsetY = 0f
             }
-        }) { paddingValues ->
+        }
+    }) { paddingValues ->
 
         SwipeRefresh(
             state = swipeRefreshState,
@@ -830,7 +850,7 @@ fun ReportPostDialog(
                     OutlinedTextField(
                         value = comment,
                         onValueChange = { comment = it },
-                        label = { Text("Comment", color = Color(0xFF666666)) },
+                        label = { Text("Please specify", color = Color(0xFF666666)) },
                         modifier = Modifier
                             .fillMaxWidth()
                             .heightIn(min = 60.dp),

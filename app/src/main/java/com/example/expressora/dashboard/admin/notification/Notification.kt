@@ -61,9 +61,12 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.expressora.R
-import com.example.expressora.components.bottom_nav.BottomNav
+import com.example.expressora.components.admin_bottom_nav.BottomNav2
 import com.example.expressora.components.top_nav.TopNav
+import com.example.expressora.dashboard.admin.analytics.AnalyticsDashboardActivity
 import com.example.expressora.dashboard.admin.communityspacemanagement.CommunitySpaceManagementActivity
+import com.example.expressora.dashboard.admin.learningmanagement.LearningManagementActivity
+import com.example.expressora.dashboard.admin.quizmanagement.QuizManagementActivity
 import com.example.expressora.dashboard.admin.settings.AdminSettingsActivity
 import com.example.expressora.ui.theme.InterFontFamily
 import com.google.accompanist.swiperefresh.SwipeRefresh
@@ -162,11 +165,25 @@ fun NotificationScreen() {
             { /* already in admin notification */ }
         })
     }, bottomBar = {
-        BottomNav(onLearnClick = {
-
-        }, onCameraClick = {
-
-        }, onQuizClick = { })
+        BottomNav2(onLearnClick = {
+            context.startActivity(
+                Intent(
+                    context, LearningManagementActivity::class.java
+                )
+            )
+        }, onAnalyticsClick = {
+            context.startActivity(
+                Intent(
+                    context, AnalyticsDashboardActivity::class.java
+                )
+            )
+        }, onQuizClick = {
+            context.startActivity(
+                Intent(
+                    context, QuizManagementActivity::class.java
+                )
+            )
+        })
     }) { paddingValues ->
         Column(
             modifier = Modifier

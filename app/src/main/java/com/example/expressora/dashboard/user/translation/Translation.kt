@@ -62,7 +62,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
-import com.example.expressora.components.bottom_nav.BottomNav
+import com.example.expressora.components.user_bottom_nav.BottomNav
 import com.example.expressora.dashboard.user.learn.LearnActivity
 import com.example.expressora.dashboard.user.quiz.QuizActivity
 import com.example.expressora.ui.theme.InterFontFamily
