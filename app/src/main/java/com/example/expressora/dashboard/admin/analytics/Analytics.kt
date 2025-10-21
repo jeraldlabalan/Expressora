@@ -186,7 +186,7 @@ fun ModernDashboard(data: DashboardData, isPdfExport: Boolean = false) {
             color = Color(0xFF1E1E1E)
         )
         Text(
-            "Analytics Overview",
+            "Performance Overview",
             fontSize = 14.sp,
             fontFamily = InterFontFamily,
             color = Color(0xFF555555)
@@ -201,7 +201,7 @@ fun ModernDashboard(data: DashboardData, isPdfExport: Boolean = false) {
         }
 
         Text(
-            "Lesson Analytics",
+            "Lesson Overview",
             fontSize = 20.sp,
             fontWeight = FontWeight.SemiBold,
             fontFamily = InterFontFamily,
@@ -221,7 +221,7 @@ fun ModernDashboard(data: DashboardData, isPdfExport: Boolean = false) {
         }
 
         Text(
-            "Quiz Analytics",
+            "Quiz Overview",
             fontSize = 20.sp,
             fontWeight = FontWeight.SemiBold,
             fontFamily = InterFontFamily,

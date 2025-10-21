@@ -85,6 +85,7 @@ import com.example.expressora.dashboard.user.notification.NotificationActivity
 import com.example.expressora.dashboard.user.quiz.QuizActivity
 import com.example.expressora.dashboard.user.translation.TranslationActivity
 import com.example.expressora.ui.theme.InterFontFamily
+import com.google.firebase.auth.FirebaseAuth
 
 class SettingsActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -196,6 +197,8 @@ fun SettingsScreen(navController: NavHostController) {
 
 
                             "Log Out" -> {
+                                FirebaseAuth.getInstance().signOut()
+
                                 val intent = Intent(context, LoginActivity::class.java)
                                 intent.flags =
                                     Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK

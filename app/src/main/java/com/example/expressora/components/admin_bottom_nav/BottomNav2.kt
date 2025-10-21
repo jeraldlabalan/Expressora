@@ -94,7 +94,7 @@ fun BottomNav2(
                     colorFilter = androidx.compose.ui.graphics.ColorFilter.tint(Color.Black)
                 )
                 Text(
-                    text = "Analytics",
+                    text = "Metrics",
                     fontSize = 14.sp,
                     fontWeight = FontWeight.Bold,
                     fontFamily = InterFontFamily,

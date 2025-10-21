@@ -41,6 +41,22 @@ android {
 }
 
 dependencies {
+    // Firebase BOM
+    implementation(platform("com.google.firebase:firebase-bom:33.4.0"))
+
+    // Firebase Auth + Firestore
+    implementation("com.google.firebase:firebase-auth-ktx")
+    implementation("com.google.firebase:firebase-firestore-ktx")
+
+    // Coroutines for Firebase
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.7.3")
+
+    // Jetpack Compose Material3 (if not added)
+    implementation("androidx.compose.material3:material3:1.3.0")
+
+    // ViewModel Compose integration
+    implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.0")
+
     implementation("com.google.android.gms:play-services-auth:21.2.0")
     implementation("androidx.compose.material:material:1.7.2")
     implementation("androidx.compose.material:material:<compose-version>")

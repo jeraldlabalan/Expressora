@@ -30,15 +30,26 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.expressora.R
 import com.example.expressora.auth.LoginActivity
+import com.example.expressora.dashboard.admin.communityspacemanagement.CommunitySpaceManagementActivity
+import com.example.expressora.dashboard.user.community_space.CommunitySpaceActivity
 import com.example.expressora.ui.theme.ExpressoraTheme
 import com.example.expressora.ui.theme.InterFontFamily
+import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.firestore.FirebaseFirestore
 import kotlinx.coroutines.delay
-
 
 class SplashScreenActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+
+        val currentUser = FirebaseAuth.getInstance().currentUser
+        if (currentUser != null) {
+            redirectToDashboard(currentUser.uid)
+            finish()
+            return
+        }
+
         setContent {
             ExpressoraTheme {
                 SplashScreen {
@@ -48,11 +59,26 @@ class SplashScreenActivity : ComponentActivity() {
             }
         }
     }
+
+    private fun redirectToDashboard(uid: String) {
+        val firestore = FirebaseFirestore.getInstance()
+        firestore.collection("users").document(uid).get().addOnSuccessListener { doc ->
+            val role = doc.getString("role") ?: "user"
+            val intent = when (role) {
+                "admin" -> Intent(this, CommunitySpaceManagementActivity::class.java)
+                else -> Intent(this, CommunitySpaceActivity::class.java)
+            }
+            startActivity(intent)
+            finish()
+        }.addOnFailureListener {
+            startActivity(Intent(this, LoginActivity::class.java))
+            finish()
+        }
+    }
 }
 
 @Composable
 fun SplashScreen(onTimeout: () -> Unit) {
-
     LaunchedEffect(Unit) {
         delay(3000)
         onTimeout()

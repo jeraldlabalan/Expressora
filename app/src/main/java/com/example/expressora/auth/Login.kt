@@ -2,6 +2,8 @@ package com.example.expressora.auth
 
 import android.content.Intent
 import android.os.Bundle
+import android.util.Patterns
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.Image
@@ -24,6 +26,7 @@ import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
@@ -34,6 +37,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -53,17 +57,46 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.expressora.R
+import com.example.expressora.backend.AuthRepository
+import com.example.expressora.dashboard.admin.communityspacemanagement.CommunitySpaceManagementActivity
 import com.example.expressora.dashboard.user.community_space.CommunitySpaceActivity
 import com.example.expressora.ui.theme.ExpressoraTheme
 import com.example.expressora.ui.theme.InterFontFamily
+import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.firestore.FirebaseFirestore
+import kotlinx.coroutines.launch
 
 class LoginActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContent {
-            ExpressoraTheme {
-                LoginScreen()
+        checkUserAndRedirect()
+    }
+
+    private fun checkUserAndRedirect() {
+        val currentUser = FirebaseAuth.getInstance().currentUser
+        if (currentUser != null) {
+            redirectToDashboard(currentUser.uid)
+        } else {
+            setContent {
+                ExpressoraTheme { LoginScreen() }
             }
+        }
+    }
+
+    private fun redirectToDashboard(uid: String) {
+        val firestore = FirebaseFirestore.getInstance()
+        firestore.collection("users").document(uid).get().addOnSuccessListener { doc ->
+            val role = doc.getString("role") ?: "user"
+            val intent = when (role) {
+                "admin" -> Intent(this, CommunitySpaceManagementActivity::class.java)
+                else -> Intent(this, CommunitySpaceActivity::class.java)
+            }
+            intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+            startActivity(intent)
+            finish()
+        }.addOnFailureListener {
+            Toast.makeText(this, "Failed to get user info", Toast.LENGTH_LONG).show()
+            setContent { ExpressoraTheme { LoginScreen() } }
         }
     }
 }
@@ -71,7 +104,14 @@ class LoginActivity : ComponentActivity() {
 @Composable
 fun LoginScreen() {
     val context = LocalContext.current
+    val repo = remember { AuthRepository() }
+    val scope = rememberCoroutineScope()
     val textColor = Color.Black
+
+    var email by remember { mutableStateOf("") }
+    var password by remember { mutableStateOf("") }
+    var passwordVisible by remember { mutableStateOf(false) }
+    var isLoading by remember { mutableStateOf(false) }
 
     val gradient = Brush.verticalGradient(
         colors = listOf(Color(0xFFFACC15), Color(0xFFF8F8F8)), startY = 0f, endY = 1000f
@@ -93,7 +133,6 @@ fun LoginScreen() {
                 verticalArrangement = Arrangement.Center,
                 modifier = Modifier.fillMaxWidth()
             ) {
-
                 Text(
                     text = "WELCOME TO",
                     fontSize = 28.sp,
@@ -123,11 +162,6 @@ fun LoginScreen() {
                 )
 
                 Spacer(modifier = Modifier.height(24.dp))
-
-                var email by remember { mutableStateOf("") }
-                var password by remember { mutableStateOf("") }
-                var passwordVisible by remember { mutableStateOf(false) }
-
 
                 TextField(
                     value = email,
@@ -203,8 +237,54 @@ fun LoginScreen() {
 
                 Button(
                     onClick = {
-                        val intent = Intent(context, CommunitySpaceActivity::class.java)
-                        context.startActivity(intent)
+                        when {
+                            email.isBlank() || password.isBlank() -> {
+                                Toast.makeText(
+                                    context, "Please fill in all fields", Toast.LENGTH_SHORT
+                                ).show()
+                            }
+
+                            !Patterns.EMAIL_ADDRESS.matcher(email).matches() -> {
+                                Toast.makeText(context, "Invalid email format", Toast.LENGTH_SHORT)
+                                    .show()
+                            }
+
+                            else -> {
+                                scope.launch {
+                                    isLoading = true
+                                    val (success, role, errorCode) = repo.loginUser(
+                                        email.trim(), password.trim()
+                                    )
+                                    isLoading = false
+
+                                    if (success) {
+                                        Toast.makeText(
+                                            context, "Login successful!", Toast.LENGTH_SHORT
+                                        ).show()
+                                        val intent = when (role) {
+                                            "admin" -> Intent(
+                                                context,
+                                                CommunitySpaceManagementActivity::class.java
+                                            )
+
+                                            else -> Intent(
+                                                context, CommunitySpaceActivity::class.java
+                                            )
+                                        }
+                                        intent.flags =
+                                            Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+                                        context.startActivity(intent)
+                                    } else {
+                                        val message = when (errorCode) {
+                                            "INVALID_PASSWORD" -> "Incorrect password"
+                                            "USER_NOT_FOUND" -> "Account not found"
+                                            else -> "Login failed. Try again."
+                                        }
+                                        Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+                                    }
+                                }
+                            }
+                        }
                     },
                     modifier = Modifier
                         .width(150.dp)
@@ -214,22 +294,25 @@ fun LoginScreen() {
                         containerColor = Color(0xFFFACC15), contentColor = textColor
                     )
                 ) {
-                    Text(
-                        text = "Log In",
-                        fontWeight = FontWeight.SemiBold,
-                        fontFamily = InterFontFamily,
-                        color = textColor
-                    )
+                    if (isLoading) {
+                        CircularProgressIndicator(
+                            color = textColor, modifier = Modifier.size(18.dp), strokeWidth = 2.dp
+                        )
+                    } else {
+                        Text(
+                            "Log In",
+                            fontWeight = FontWeight.SemiBold,
+                            fontFamily = InterFontFamily,
+                            color = textColor
+                        )
+                    }
                 }
 
                 Spacer(modifier = Modifier.height(24.dp))
 
-
                 val registerText = buildAnnotatedString {
                     append("Don’t have an account?\n")
-                    withStyle(style = SpanStyle(fontWeight = FontWeight.SemiBold)) {
-                        append("Register Now")
-                    }
+                    withStyle(style = SpanStyle(fontWeight = FontWeight.SemiBold)) { append("Register Now") }
                 }
 
                 ClickableText(
@@ -243,18 +326,14 @@ fun LoginScreen() {
                         val startIndex = registerText.indexOf(registerPart)
                         val endIndex = startIndex + registerPart.length
                         if (offset in startIndex until endIndex) {
-                            val intent = Intent(context, RegisterActivity::class.java)
-                            context.startActivity(intent)
+                            context.startActivity(Intent(context, RegisterActivity::class.java))
                         }
                     })
 
                 Spacer(modifier = Modifier.height(32.dp))
 
-
                 val resetText = buildAnnotatedString {
-                    withStyle(style = SpanStyle(fontWeight = FontWeight.SemiBold)) {
-                        append("Forgot Password")
-                    }
+                    withStyle(style = SpanStyle(fontWeight = FontWeight.SemiBold)) { append("Forgot Password") }
                 }
 
                 ClickableText(
@@ -264,8 +343,7 @@ fun LoginScreen() {
                         textAlign = TextAlign.Center,
                         fontFamily = InterFontFamily
                     ), onClick = {
-                        val intent = Intent(context, ResetPasswordActivity::class.java)
-                        context.startActivity(intent)
+                        context.startActivity(Intent(context, ResetPasswordActivity::class.java))
                     })
             }
         }
@@ -275,7 +353,5 @@ fun LoginScreen() {
 @Preview(showBackground = true)
 @Composable
 fun LoginPreview() {
-    ExpressoraTheme {
-        LoginScreen()
-    }
+    ExpressoraTheme { LoginScreen() }
 }

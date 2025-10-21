@@ -79,6 +79,7 @@ import com.example.expressora.dashboard.admin.learningmanagement.LearningManagem
 import com.example.expressora.dashboard.admin.notification.NotificationActivity
 import com.example.expressora.dashboard.admin.quizmanagement.QuizManagementActivity
 import com.example.expressora.ui.theme.InterFontFamily
+import com.google.firebase.auth.FirebaseAuth
 
 class AdminSettingsActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -202,6 +203,8 @@ fun AdminSettingsScreen(navController: NavHostController) {
 
 
                             "Log Out" -> {
+                                FirebaseAuth.getInstance().signOut()
+
                                 val intent = Intent(context, LoginActivity::class.java)
                                 intent.flags =
                                     Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
