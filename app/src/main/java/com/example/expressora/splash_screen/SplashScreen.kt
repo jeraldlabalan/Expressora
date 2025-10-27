@@ -1,5 +1,6 @@
 package com.example.expressora.splash_screen
 
+import android.content.Context
 import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -50,11 +51,32 @@ class SplashScreenActivity : ComponentActivity() {
             return
         }
 
-        setContent {
-            ExpressoraTheme {
-                SplashScreen {
-                    startActivity(Intent(this, LoginActivity::class.java))
-                    finish()
+        // Check if user has a saved session
+        checkSavedSession()
+    }
+
+    private fun checkSavedSession() {
+        val sharedPref = getSharedPreferences("user_session", MODE_PRIVATE)
+        val userEmail = sharedPref.getString("user_email", null)
+        val userRole = sharedPref.getString("user_role", null)
+
+        if (userEmail != null && userRole != null) {
+            // User has a saved session, redirect to dashboard
+            val intent = when (userRole) {
+                "admin" -> Intent(this, CommunitySpaceManagementActivity::class.java)
+                else -> Intent(this, CommunitySpaceActivity::class.java)
+            }
+            intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+            startActivity(intent)
+            finish()
+        } else {
+            // No saved session, show splash screen
+            setContent {
+                ExpressoraTheme {
+                    SplashScreen {
+                        startActivity(Intent(this, LoginActivity::class.java))
+                        finish()
+                    }
                 }
             }
         }

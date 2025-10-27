@@ -1,6 +1,8 @@
 package com.example.expressora.auth
 
+import android.content.Context
 import android.content.Intent
+import android.os.Build
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
@@ -60,6 +62,7 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.expressora.R
+import com.example.expressora.dashboard.admin.communityspacemanagement.CommunitySpaceManagementActivity
 import com.example.expressora.dashboard.user.community_space.CommunitySpaceActivity
 import com.example.expressora.ui.theme.ExpressoraTheme
 import com.example.expressora.ui.theme.InterFontFamily
@@ -67,26 +70,265 @@ import com.google.android.gms.auth.api.signin.GoogleSignIn
 import com.google.android.gms.auth.api.signin.GoogleSignInClient
 import com.google.android.gms.auth.api.signin.GoogleSignInOptions
 import com.google.android.gms.common.api.ApiException
-import com.google.android.gms.tasks.Task
+import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.firestore.FirebaseFirestore
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import okhttp3.MediaType.Companion.toMediaTypeOrNull
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
+import org.json.JSONObject
+import java.util.Date
+import java.util.concurrent.TimeUnit
 
 class RegisterActivity : ComponentActivity() {
 
     private lateinit var googleSignInClient: GoogleSignInClient
     private val GOOGLE_SIGN_IN_REQUEST = 1001
+    private val firestore = FirebaseFirestore.getInstance()
+    private val firebaseAuth = FirebaseAuth.getInstance()
+    private lateinit var context: Context
+
+    private var otpEmail: String = ""
+    private var otpPassword: String = ""
+
+    private var currentStep by mutableStateOf(1)
+    private var isOtpSent by mutableStateOf(false)
+    private var isRegistrationComplete by mutableStateOf(false)
+
+    private val client: OkHttpClient = OkHttpClient.Builder().callTimeout(30, TimeUnit.SECONDS)
+        .connectTimeout(15, TimeUnit.SECONDS).readTimeout(30, TimeUnit.SECONDS).build()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        context = this
+        checkUserAndRedirect()
+    }
 
-        val gso =
-            GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN).requestEmail().build()
+    private fun checkUserAndRedirect() {
+        val currentUser = FirebaseAuth.getInstance().currentUser
+        if (currentUser != null) {
+            redirectToDashboard(currentUser.uid)
+        } else {
+            checkSavedSession()
+        }
+    }
 
+    private fun checkSavedSession() {
+        val sharedPref = getSharedPreferences("user_session", MODE_PRIVATE)
+        val userEmail = sharedPref.getString("user_email", null)
+        val userRole = sharedPref.getString("user_role", null)
+
+        if (userEmail != null && userRole != null) {
+            val intent = when (userRole) {
+                "admin" -> Intent(this, CommunitySpaceManagementActivity::class.java)
+                else -> Intent(this, CommunitySpaceActivity::class.java)
+            }
+            intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+            startActivity(intent)
+            finish()
+        } else {
+            showRegisterScreen()
+        }
+    }
+
+    private fun showRegisterScreen() {
+        val gso = GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
+            .requestIdToken(getString(R.string.default_web_client_id)).requestEmail().build()
         googleSignInClient = GoogleSignIn.getClient(this, gso)
 
         setContent {
             ExpressoraTheme {
-                RegisterScreen(onGoogleSignInClick = { signInWithGoogle() })
+                RegisterScreen(
+                    onGoogleSignInClick = { signInWithGoogle() },
+                    onSendOtp = { email, password ->
+                        checkAndSendOtp(email, password)
+                    },
+                    onVerifyOtp = { enteredOtp ->
+                        verifyOtp(enteredOtp)
+                    },
+                    currentStep = currentStep
+                )
             }
         }
+    }
+
+    private fun redirectToDashboard(uid: String) {
+        val firestore = FirebaseFirestore.getInstance()
+        firestore.collection("users").document(uid).get().addOnSuccessListener { doc ->
+            val role = doc.getString("role") ?: "user"
+            val intent = when (role) {
+                "admin" -> Intent(this, CommunitySpaceManagementActivity::class.java)
+                else -> Intent(this, CommunitySpaceActivity::class.java)
+            }
+            intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+            startActivity(intent)
+            finish()
+        }.addOnFailureListener {
+            Toast.makeText(this, "Failed to get user info", Toast.LENGTH_LONG).show()
+            showRegisterScreen()
+        }
+    }
+
+    /**
+     * Checks Firestore if the email already exists.
+     * If not, proceeds to send OTP and move to step 2.
+     */
+    private fun checkAndSendOtp(email: String, password: String) {
+        if (email.isBlank() || password.isBlank()) {
+            Toast.makeText(context, "Please enter both email and password", Toast.LENGTH_SHORT)
+                .show()
+            return
+        }
+
+        firestore.collection("users").whereEqualTo("email", email.trim()).get()
+            .addOnSuccessListener { snapshot ->
+                if (!snapshot.isEmpty) {
+                    Toast.makeText(
+                        context,
+                        "Email already registered. Please log in instead.",
+                        Toast.LENGTH_LONG
+                    ).show()
+                } else {
+                    sendOtp(email.trim(), password)
+                }
+            }.addOnFailureListener { e ->
+                Toast.makeText(
+                    context,
+                    "Error checking existing account: ${e.localizedMessage}",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+    }
+
+    private fun sendOtp(email: String, password: String) {
+        otpEmail = email
+        otpPassword = password
+
+        val LOCAL_HOST_IP = "192.168.1.9"
+        val baseUrl = if (isEmulator()) "http://10.0.2.2:3000" else "http://$LOCAL_HOST_IP:3000"
+
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                val json = JSONObject().apply { put("email", email) }
+                val body = json.toString().toRequestBody("application/json".toMediaTypeOrNull())
+                val request = Request.Builder().url("$baseUrl/send-otp").post(body)
+                    .addHeader("Content-Type", "application/json").build()
+
+                val response = client.newCall(request).execute()
+                withContext(Dispatchers.Main) {
+                    if (response.isSuccessful) {
+                        Toast.makeText(context, "OTP sent to $email", Toast.LENGTH_SHORT).show()
+                        currentStep = 2
+                        isOtpSent = true
+                    } else {
+                        Toast.makeText(
+                            context, "Failed to send OTP (${response.code})", Toast.LENGTH_SHORT
+                        ).show()
+                    }
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(
+                        context, "Error sending OTP: ${e.localizedMessage}", Toast.LENGTH_LONG
+                    ).show()
+                }
+            }
+        }
+    }
+
+    private fun verifyOtp(enteredOtp: String) {
+        val LOCAL_HOST_IP = "192.168.1.9"
+        val baseUrl = if (isEmulator()) "http://10.0.2.2:3000" else "http://$LOCAL_HOST_IP:3000"
+
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                val json = JSONObject().apply {
+                    put("email", otpEmail)
+                    put("otp", enteredOtp)
+                }
+                val body = json.toString().toRequestBody("application/json".toMediaTypeOrNull())
+                val request = Request.Builder().url("$baseUrl/verify-otp").post(body)
+                    .addHeader("Content-Type", "application/json").build()
+
+                val response = client.newCall(request).execute()
+                withContext(Dispatchers.Main) {
+                    if (response.isSuccessful) {
+                        Toast.makeText(context, "OTP Verified", Toast.LENGTH_SHORT).show()
+                        saveUserToFirestore()
+                    } else {
+                        Toast.makeText(
+                            context, "Incorrect OTP. Please try again.", Toast.LENGTH_SHORT
+                        ).show()
+                    }
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(
+                        context, "Error verifying OTP: ${e.localizedMessage}", Toast.LENGTH_LONG
+                    ).show()
+                }
+            }
+        }
+    }
+
+    private fun saveUserToFirestore() {
+        firebaseAuth.createUserWithEmailAndPassword(otpEmail, otpPassword)
+            .addOnSuccessListener { authResult ->
+                val uid = authResult.user?.uid
+                if (uid != null) {
+                    println("DEBUG: Firebase Auth user created with UID: $uid")
+
+                    val user = hashMapOf(
+                        "email" to otpEmail,
+                        "password" to otpPassword.hashCode().toString(),
+                        "firstName" to "",
+                        "lastName" to "",
+                        "profile" to "",
+                        "role" to "user",
+                        "createdAt" to Date()
+                    )
+                    firestore.collection("users").document(uid).set(user).addOnSuccessListener {
+                        println("DEBUG: User data saved to Firestore")
+
+                        firebaseAuth.signOut()
+
+                        val sharedPref = getSharedPreferences("user_session", MODE_PRIVATE)
+                        with(sharedPref.edit()) {
+                            clear()
+                            apply()
+                        }
+
+                        Toast.makeText(context, "Registration successful", Toast.LENGTH_SHORT)
+                            .show()
+                        isRegistrationComplete = true
+
+                        val intent = Intent(this, LoginActivity::class.java)
+                        intent.flags =
+                            Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+                        startActivity(intent)
+                        finish()
+                    }.addOnFailureListener { e ->
+                        println("DEBUG: Error saving to Firestore: ${e.localizedMessage}")
+                        Toast.makeText(
+                            context,
+                            "Error saving user data: ${e.localizedMessage}",
+                            Toast.LENGTH_LONG
+                        ).show()
+                    }
+                } else {
+                    println("DEBUG: No UID returned from Firebase Auth")
+                    Toast.makeText(context, "Error creating user account", Toast.LENGTH_LONG).show()
+                }
+            }.addOnFailureListener { e ->
+                println("DEBUG: Firebase Auth creation failed: ${e.localizedMessage}")
+                Toast.makeText(
+                    context, "Error creating user: ${e.localizedMessage}", Toast.LENGTH_LONG
+                ).show()
+            }
     }
 
     private fun signInWithGoogle() {
@@ -94,52 +336,118 @@ class RegisterActivity : ComponentActivity() {
         startActivityForResult(signInIntent, GOOGLE_SIGN_IN_REQUEST)
     }
 
+    @Deprecated("Deprecated in Java")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
         if (requestCode == GOOGLE_SIGN_IN_REQUEST) {
-            val task: Task<com.google.android.gms.auth.api.signin.GoogleSignInAccount> =
-                GoogleSignIn.getSignedInAccountFromIntent(data)
+            val task = GoogleSignIn.getSignedInAccountFromIntent(data)
             try {
                 val account = task.getResult(ApiException::class.java)
-                val email = account?.email
-                val name = account?.displayName
+                account?.idToken
+                val email = account?.email ?: return
+                val name = account.displayName ?: "User"
 
-                Toast.makeText(this, "Welcome, $name!", Toast.LENGTH_SHORT).show()
+                handlePostGoogleSignIn(email, name)
+
+            } catch (e: ApiException) {
+                Toast.makeText(context, "Google Sign-In failed: ${e.message}", Toast.LENGTH_LONG)
+                    .show()
+            }
+        }
+    }
+
+    private fun sendGoogleTokenToBackend(idToken: String, displayName: String, email: String) {
+        val LOCAL_HOST_IP = "192.168.1.9"
+        val baseUrl = if (isEmulator()) "http://10.0.2.2:3000" else "http://$LOCAL_HOST_IP:3000"
+
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                val json = JSONObject().apply { put("token", idToken) }
+                val body = json.toString().toRequestBody("application/json".toMediaTypeOrNull())
+                val request = Request.Builder().url("$baseUrl/google-auth").post(body)
+                    .addHeader("Content-Type", "application/json").build()
+
+                val response = client.newCall(request).execute()
+                withContext(Dispatchers.Main) {
+                    if (response.isSuccessful) {
+                        handlePostGoogleSignIn(email, displayName)
+                    } else {
+                        Toast.makeText(
+                            context,
+                            "Backend verification failed, proceeding with local sign-in.",
+                            Toast.LENGTH_SHORT
+                        ).show()
+                        handlePostGoogleSignIn(email, displayName)
+                    }
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(
+                        context,
+                        "Backend not available, proceeding with local sign-in.",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                    handlePostGoogleSignIn(email, displayName)
+                }
+            }
+        }
+    }
+
+    private fun handlePostGoogleSignIn(email: String, name: String) {
+        firestore.collection("users").whereEqualTo("email", email).get()
+            .addOnSuccessListener { snapshot ->
+                if (snapshot.isEmpty) {
+                    val randomPassword = "google_${System.currentTimeMillis()}"
+                    firebaseAuth.createUserWithEmailAndPassword(email, randomPassword)
+                        .addOnSuccessListener { authResult ->
+                            val uid = authResult.user?.uid
+                            if (uid != null) {
+                                val user = hashMapOf(
+                                    "email" to email,
+                                    "password" to randomPassword.hashCode().toString(),
+                                    "firstName" to "",
+                                    "lastName" to "",
+                                    "profile" to "",
+                                    "role" to "user",
+                                    "createdAt" to Date()
+                                )
+                                firestore.collection("users").document(uid).set(user)
+                            }
+                        }.addOnFailureListener { e ->
+                        }
+                }
 
                 val intent = Intent(this, CommunitySpaceActivity::class.java)
                 intent.putExtra("USER_NAME", name)
                 intent.putExtra("USER_EMAIL", email)
                 startActivity(intent)
                 finish()
-
-            } catch (e: ApiException) {
-                val errorMessage = when (e.statusCode) {
-                    7 -> "Network error. Please check your internet connection."
-                    10 -> "Developer error: Check your OAuth configuration."
-                    13 -> "Error: The sign-in process was canceled or interrupted."
-                    12500 -> "Sign-in failed: Unknown issue occurred."
-                    12501 -> "Sign-in canceled by the user."
-                    12502 -> "Sign-in already in progress. Please wait."
-                    else -> "Google Sign-In failed: ${e.message ?: "Unknown error"}"
-                }
-
-                Toast.makeText(this, errorMessage, Toast.LENGTH_LONG).show()
-            } catch (e: Exception) {
-                Toast.makeText(this, "Error: ${e.localizedMessage}", Toast.LENGTH_LONG).show()
+            }.addOnFailureListener { e ->
+                Toast.makeText(context, "Error: ${e.localizedMessage}", Toast.LENGTH_LONG).show()
             }
-        }
+    }
+
+    private fun isEmulator(): Boolean {
+        return (Build.FINGERPRINT.startsWith("generic") || Build.FINGERPRINT.lowercase()
+            .contains("vbox") || Build.MODEL.contains("Emulator") || Build.MODEL.contains("Android SDK built for x86") || Build.MANUFACTURER.contains(
+            "Genymotion"
+        ) || Build.BRAND.startsWith("generic") && Build.DEVICE.startsWith("generic"))
     }
 }
 
 @Composable
-fun RegisterScreen(onGoogleSignInClick: () -> Unit = {}) {
-    val context = LocalContext.current
+fun RegisterScreen(
+    onGoogleSignInClick: () -> Unit = {},
+    onSendOtp: (String, String) -> Unit = { _, _ -> },
+    onVerifyOtp: (String) -> Unit = {},
+    currentStep: Int = 1
+) {
+    LocalContext.current
     val textColor = Color.Black
     val gradient = Brush.verticalGradient(
         colors = listOf(Color(0xFFFACC15), Color(0xFFF8F8F8)), startY = 0f, endY = 1000f
     )
 
-    var step by remember { mutableStateOf(1) }
     var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
     var otp by remember { mutableStateOf("") }
@@ -170,7 +478,7 @@ fun RegisterScreen(onGoogleSignInClick: () -> Unit = {}) {
                 Spacer(modifier = Modifier.height(24.dp))
 
                 Text(
-                    text = when (step) {
+                    text = when (currentStep) {
                         1 -> "Sign Up"
                         else -> "Enter OTP"
                     },
@@ -185,9 +493,9 @@ fun RegisterScreen(onGoogleSignInClick: () -> Unit = {}) {
                 Spacer(modifier = Modifier.height(8.dp))
 
                 Text(
-                    text = when (step) {
+                    text = when (currentStep) {
                         1 -> "Start your journey by joining us today"
-                        else -> "We’ve sent a code to your email"
+                        else -> "We've sent a code to your email"
                     },
                     color = textColor,
                     fontSize = 14.sp,
@@ -198,7 +506,7 @@ fun RegisterScreen(onGoogleSignInClick: () -> Unit = {}) {
 
                 Spacer(modifier = Modifier.height(8.dp))
 
-                when (step) {
+                when (currentStep) {
                     1 -> {
                         EmailField(
                             value = email, onValueChange = { email = it }, textColor = textColor
@@ -217,7 +525,7 @@ fun RegisterScreen(onGoogleSignInClick: () -> Unit = {}) {
 
                         YellowButton2("Sign Up") {
                             if (email.isNotBlank() && password.isNotBlank()) {
-                                step = 2
+                                onSendOtp(email, password)
                             }
                         }
 
@@ -262,8 +570,7 @@ fun RegisterScreen(onGoogleSignInClick: () -> Unit = {}) {
 
                         YellowButton2("Verify") {
                             if (otp.length == 5) {
-                                val intent = Intent(context, LoginActivity::class.java)
-                                context.startActivity(intent)
+                                onVerifyOtp(otp)
                             }
                         }
                     }

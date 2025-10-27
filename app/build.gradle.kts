@@ -57,6 +57,21 @@ dependencies {
     // ViewModel Compose integration
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.0")
 
+    implementation("com.google.android.gms:play-services-auth:20.7.0")
+    implementation("com.squareup.okhttp3:okhttp:4.11.0")
+
+    // Retrofit for backend OTP requests
+    implementation("com.squareup.retrofit2:retrofit:2.9.0")
+    implementation("com.squareup.retrofit2:converter-gson:2.9.0")
+
+    implementation("org.mindrot:jbcrypt:0.4")
+
+    // OkHttp para sa HTTP requests
+    implementation("com.squareup.okhttp3:okhttp:4.11.0")
+
+// Kotlin coroutines para async calls
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
+
     implementation("com.google.android.gms:play-services-auth:21.2.0")
     implementation("androidx.compose.material:material:1.7.2")
     implementation("androidx.compose.material:material:<compose-version>")

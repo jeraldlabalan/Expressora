@@ -12,7 +12,12 @@
           "package_name": "com.example.expressora"
         }
       },
-      "oauth_client": [],
+      "oauth_client": [
+        {
+          "client_id": "822704255526-5oeh898l9o29hhrs7kb7kvo6pot56bva.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
       "api_key": [
         {
           "current_key": "AIzaSyCdlWCCsoO5vmGGGMAIicDe49V6JVlsSKY"
@@ -20,7 +25,12 @@
       ],
       "services": {
         "appinvite_service": {
-          "other_platform_oauth_client": []
+          "other_platform_oauth_client": [
+            {
+              "client_id": "822704255526-5oeh898l9o29hhrs7kb7kvo6pot56bva.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
         }
       }
     }

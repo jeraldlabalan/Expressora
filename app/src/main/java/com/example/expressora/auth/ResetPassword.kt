@@ -1,7 +1,10 @@
 package com.example.expressora.auth
 
+import android.content.Context
 import android.content.Intent
+import android.os.Build
 import android.os.Bundle
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.Image
@@ -44,7 +47,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -55,29 +57,276 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.expressora.R
+import com.example.expressora.dashboard.admin.communityspacemanagement.CommunitySpaceManagementActivity
+import com.example.expressora.dashboard.user.community_space.CommunitySpaceActivity
 import com.example.expressora.ui.theme.ExpressoraTheme
 import com.example.expressora.ui.theme.InterFontFamily
+import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.firestore.FirebaseFirestore
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import okhttp3.MediaType.Companion.toMediaTypeOrNull
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
+import org.json.JSONObject
+import java.util.concurrent.TimeUnit
 
 class ResetPasswordActivity : ComponentActivity() {
+
+    private lateinit var context: Context
+    private val firestore = FirebaseFirestore.getInstance()
+    private var resetEmail: String = ""
+    private var resetOtp: String = ""
+
+    private var currentStep by mutableStateOf(1)
+    private var isOtpSent by mutableStateOf(false)
+    private var isPasswordReset by mutableStateOf(false)
+
+    private val client: OkHttpClient = OkHttpClient.Builder().callTimeout(30, TimeUnit.SECONDS)
+        .connectTimeout(15, TimeUnit.SECONDS).readTimeout(30, TimeUnit.SECONDS).build()
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        context = this
+        checkUserAndRedirect()
+    }
+
+    private fun checkUserAndRedirect() {
+        val currentUser = FirebaseAuth.getInstance().currentUser
+        if (currentUser != null) {
+            redirectToDashboard(currentUser.uid)
+        } else {
+            checkSavedSession()
+        }
+    }
+
+    private fun checkSavedSession() {
+        val sharedPref = getSharedPreferences("user_session", MODE_PRIVATE)
+        val userEmail = sharedPref.getString("user_email", null)
+        val userRole = sharedPref.getString("user_role", null)
+
+        if (userEmail != null && userRole != null) {
+            val intent = when (userRole) {
+                "admin" -> Intent(this, CommunitySpaceManagementActivity::class.java)
+                else -> Intent(this, CommunitySpaceActivity::class.java)
+            }
+            intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+            startActivity(intent)
+            finish()
+        } else {
+            showResetPasswordScreen()
+        }
+    }
+
+    private fun showResetPasswordScreen() {
         setContent {
             ExpressoraTheme {
-                ResetPasswordScreen()
+                ResetPasswordScreen(
+                    onSendOtp = { email -> checkEmailAndSendOtp(email) },
+                    onVerifyOtp = { otp -> verifyOtp(otp) },
+                    onResetPassword = { newPassword, confirmPassword ->
+                        resetPassword(newPassword, confirmPassword)
+                    },
+                    currentStep = currentStep
+                )
             }
         }
+    }
+
+    private fun redirectToDashboard(uid: String) {
+        val firestore = FirebaseFirestore.getInstance()
+        firestore.collection("users").document(uid).get().addOnSuccessListener { doc ->
+            val role = doc.getString("role") ?: "user"
+            val intent = when (role) {
+                "admin" -> Intent(this, CommunitySpaceManagementActivity::class.java)
+                else -> Intent(this, CommunitySpaceActivity::class.java)
+            }
+            intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+            startActivity(intent)
+            finish()
+        }.addOnFailureListener {
+            Toast.makeText(this, "Failed to get user info", Toast.LENGTH_LONG).show()
+            showResetPasswordScreen()
+        }
+    }
+
+    /**
+     * Checks if email exists in Firestore, then sends OTP
+     */
+    private fun checkEmailAndSendOtp(email: String) {
+        if (email.isBlank()) {
+            Toast.makeText(context, "Please enter your email", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        firestore.collection("users").whereEqualTo("email", email.trim()).get()
+            .addOnSuccessListener { snapshot ->
+                if (snapshot.isEmpty) {
+                    Toast.makeText(
+                        context,
+                        "Email not found. Please check your email or register first.",
+                        Toast.LENGTH_LONG
+                    ).show()
+                } else {
+                    resetEmail = email.trim()
+                    sendOtp(email.trim())
+                }
+            }.addOnFailureListener { e ->
+                Toast.makeText(
+                    context, "Error checking email: ${e.localizedMessage}", Toast.LENGTH_LONG
+                ).show()
+            }
+    }
+
+    private fun sendOtp(email: String) {
+        val LOCAL_HOST_IP = "192.168.1.9"
+        val baseUrl = if (isEmulator()) "http://10.0.2.2:3000" else "http://$LOCAL_HOST_IP:3000"
+
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                val json = JSONObject().apply { put("email", email) }
+                val body = json.toString().toRequestBody("application/json".toMediaTypeOrNull())
+                val request = Request.Builder().url("$baseUrl/send-otp").post(body)
+                    .addHeader("Content-Type", "application/json").build()
+
+                val response = client.newCall(request).execute()
+                withContext(Dispatchers.Main) {
+                    if (response.isSuccessful) {
+                        Toast.makeText(context, "OTP sent to $email", Toast.LENGTH_SHORT).show()
+                        currentStep = 2
+                        isOtpSent = true
+                    } else {
+                        Toast.makeText(
+                            context, "Failed to send OTP (${response.code})", Toast.LENGTH_SHORT
+                        ).show()
+                    }
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(
+                        context, "Error sending OTP: ${e.localizedMessage}", Toast.LENGTH_LONG
+                    ).show()
+                }
+            }
+        }
+    }
+
+    private fun verifyOtp(enteredOtp: String) {
+        val LOCAL_HOST_IP = "192.168.1.9"
+        val baseUrl = if (isEmulator()) "http://10.0.2.2:3000" else "http://$LOCAL_HOST_IP:3000"
+
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                val json = JSONObject().apply {
+                    put("email", resetEmail)
+                    put("otp", enteredOtp)
+                }
+                val body = json.toString().toRequestBody("application/json".toMediaTypeOrNull())
+                val request = Request.Builder().url("$baseUrl/verify-otp").post(body)
+                    .addHeader("Content-Type", "application/json").build()
+
+                val response = client.newCall(request).execute()
+                withContext(Dispatchers.Main) {
+                    if (response.isSuccessful) {
+                        Toast.makeText(context, "OTP Verified", Toast.LENGTH_SHORT).show()
+                        resetOtp = enteredOtp
+                        currentStep = 3
+                    } else {
+                        Toast.makeText(
+                            context, "Incorrect OTP. Please try again.", Toast.LENGTH_SHORT
+                        ).show()
+                    }
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(
+                        context, "Error verifying OTP: ${e.localizedMessage}", Toast.LENGTH_LONG
+                    ).show()
+                }
+            }
+        }
+    }
+
+    private fun resetPassword(newPassword: String, confirmPassword: String) {
+        if (newPassword.isBlank() || confirmPassword.isBlank()) {
+            Toast.makeText(context, "Please enter both fields", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        if (newPassword != confirmPassword) {
+            Toast.makeText(context, "Passwords do not match", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        if (newPassword.length < 6) {
+            Toast.makeText(context, "Password must be at least 6 characters", Toast.LENGTH_SHORT)
+                .show()
+            return
+        }
+
+        firestore.collection("users").whereEqualTo("email", resetEmail).get()
+            .addOnSuccessListener { snapshot ->
+                if (!snapshot.isEmpty) {
+                    val document = snapshot.documents[0]
+
+                    document.reference.update("password", newPassword.hashCode().toString())
+                        .addOnSuccessListener {
+                            val sharedPref =
+                                getSharedPreferences("user_session", MODE_PRIVATE)
+                            with(sharedPref.edit()) {
+                                clear()
+                                apply()
+                            }
+
+                            Toast.makeText(context, "Password reset successful", Toast.LENGTH_SHORT)
+                                .show()
+                            isPasswordReset = true
+
+                            val intent = Intent(this, LoginActivity::class.java)
+                            intent.flags =
+                                Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+                            startActivity(intent)
+                            finish()
+                        }.addOnFailureListener { e ->
+                            Toast.makeText(
+                                context,
+                                "Error updating password: ${e.localizedMessage}",
+                                Toast.LENGTH_LONG
+                            ).show()
+                        }
+                } else {
+                    Toast.makeText(context, "User not found", Toast.LENGTH_SHORT).show()
+                }
+            }.addOnFailureListener { e ->
+                Toast.makeText(
+                    context, "Error finding user: ${e.localizedMessage}", Toast.LENGTH_LONG
+                ).show()
+            }
+    }
+
+    private fun isEmulator(): Boolean {
+        return (Build.FINGERPRINT.startsWith("generic") || Build.FINGERPRINT.lowercase()
+            .contains("vbox") || Build.MODEL.contains("Emulator") || Build.MODEL.contains("Android SDK built for x86") || Build.MANUFACTURER.contains(
+            "Genymotion"
+        ) || Build.BRAND.startsWith("generic") && Build.DEVICE.startsWith("generic"))
     }
 }
 
 @Composable
-fun ResetPasswordScreen() {
-    val context = LocalContext.current
+fun ResetPasswordScreen(
+    onSendOtp: (String) -> Unit = {},
+    onVerifyOtp: (String) -> Unit = {},
+    onResetPassword: (String, String) -> Unit = { _, _ -> },
+    currentStep: Int = 1
+) {
     val textColor = Color.Black
     val gradient = Brush.verticalGradient(
         colors = listOf(Color(0xFFFACC15), Color(0xFFF8F8F8)), startY = 0f, endY = 1000f
     )
 
-    var step by remember { mutableStateOf(1) }
     var email by remember { mutableStateOf("") }
     var otp by remember { mutableStateOf("") }
     var newPassword by remember { mutableStateOf("") }
@@ -105,7 +354,7 @@ fun ResetPasswordScreen() {
 
 
             Text(
-                text = when (step) {
+                text = when (currentStep) {
                     1 -> "Reset Password"
                     2 -> "Enter OTP"
                     else -> "Set New Password"
@@ -122,10 +371,10 @@ fun ResetPasswordScreen() {
 
 
             Text(
-                text = when (step) {
+                text = when (currentStep) {
                     1 -> "Enter your email to receive a reset code"
-                    2 -> "We’ve sent a code to your email"
-                    else -> "Choose a new password you’ll remember"
+                    2 -> "We've sent a code to your email"
+                    else -> "Choose a new password you'll remember"
                 },
                 color = textColor,
                 fontSize = 14.sp,
@@ -136,14 +385,16 @@ fun ResetPasswordScreen() {
 
             Spacer(modifier = Modifier.height(8.dp))
 
-            when (step) {
+            when (currentStep) {
                 1 -> {
                     StyledTextField(
                         value = email, onValueChange = { email = it }, placeholder = "Email"
                     )
                     Spacer(modifier = Modifier.height(24.dp))
                     YellowButton("Next") {
-                        if (email.isNotBlank()) step = 2
+                        if (email.isNotBlank()) {
+                            onSendOtp(email)
+                        }
                     }
                 }
 
@@ -151,7 +402,9 @@ fun ResetPasswordScreen() {
                     OTPInput(otpText = otp, onOtpChange = { if (it.length <= 5) otp = it })
                     Spacer(modifier = Modifier.height(24.dp))
                     YellowButton("Verify") {
-                        if (otp.length == 5) step = 3
+                        if (otp.length == 5) {
+                            onVerifyOtp(otp)
+                        }
                     }
                 }
 
@@ -171,8 +424,9 @@ fun ResetPasswordScreen() {
                     )
                     Spacer(modifier = Modifier.height(24.dp))
                     YellowButton("Reset") {
-
-                        context.startActivity(Intent(context, LoginActivity::class.java))
+                        if (newPassword.isNotBlank() && confirmPassword.isNotBlank()) {
+                            onResetPassword(newPassword, confirmPassword)
+                        }
                     }
                 }
             }

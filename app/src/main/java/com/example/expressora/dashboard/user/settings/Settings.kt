@@ -199,6 +199,14 @@ fun SettingsScreen(navController: NavHostController) {
                             "Log Out" -> {
                                 FirebaseAuth.getInstance().signOut()
 
+                                val sharedPref = context.getSharedPreferences(
+                                    "user_session", android.content.Context.MODE_PRIVATE
+                                )
+                                with(sharedPref.edit()) {
+                                    clear()
+                                    apply()
+                                }
+
                                 val intent = Intent(context, LoginActivity::class.java)
                                 intent.flags =
                                     Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK

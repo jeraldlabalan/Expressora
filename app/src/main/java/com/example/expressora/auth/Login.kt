@@ -1,5 +1,6 @@
 package com.example.expressora.auth
 
+import android.content.Context
 import android.content.Intent
 import android.os.Bundle
 import android.util.Patterns
@@ -77,6 +78,24 @@ class LoginActivity : ComponentActivity() {
         if (currentUser != null) {
             redirectToDashboard(currentUser.uid)
         } else {
+            checkSavedSession()
+        }
+    }
+
+    private fun checkSavedSession() {
+        val sharedPref = getSharedPreferences("user_session", MODE_PRIVATE)
+        val userEmail = sharedPref.getString("user_email", null)
+        val userRole = sharedPref.getString("user_role", null)
+
+        if (userEmail != null && userRole != null) {
+            val intent = when (userRole) {
+                "admin" -> Intent(this, CommunitySpaceManagementActivity::class.java)
+                else -> Intent(this, CommunitySpaceActivity::class.java)
+            }
+            intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+            startActivity(intent)
+            finish()
+        } else {
             setContent {
                 ExpressoraTheme { LoginScreen() }
             }
@@ -86,14 +105,19 @@ class LoginActivity : ComponentActivity() {
     private fun redirectToDashboard(uid: String) {
         val firestore = FirebaseFirestore.getInstance()
         firestore.collection("users").document(uid).get().addOnSuccessListener { doc ->
-            val role = doc.getString("role") ?: "user"
-            val intent = when (role) {
-                "admin" -> Intent(this, CommunitySpaceManagementActivity::class.java)
-                else -> Intent(this, CommunitySpaceActivity::class.java)
+            if (doc.exists()) {
+                val role = doc.getString("role") ?: "user"
+                val intent = when (role) {
+                    "admin" -> Intent(this, CommunitySpaceManagementActivity::class.java)
+                    else -> Intent(this, CommunitySpaceActivity::class.java)
+                }
+                intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+                startActivity(intent)
+                finish()
+            } else {
+                FirebaseAuth.getInstance().signOut()
+                setContent { ExpressoraTheme { LoginScreen() } }
             }
-            intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
-            startActivity(intent)
-            finish()
         }.addOnFailureListener {
             Toast.makeText(this, "Failed to get user info", Toast.LENGTH_LONG).show()
             setContent { ExpressoraTheme { LoginScreen() } }
@@ -175,7 +199,9 @@ fun LoginScreen() {
                         )
                     },
                     textStyle = TextStyle(
-                        fontFamily = InterFontFamily, fontSize = 16.sp, color = textColor
+                        fontFamily = InterFontFamily,
+                        fontSize = 16.sp,
+                        color = textColor
                     ),
                     modifier = Modifier.width(300.dp),
                     singleLine = true,
@@ -205,7 +231,9 @@ fun LoginScreen() {
                         )
                     },
                     textStyle = TextStyle(
-                        fontFamily = InterFontFamily, fontSize = 16.sp, color = textColor
+                        fontFamily = InterFontFamily,
+                        fontSize = 16.sp,
+                        color = textColor
                     ),
                     visualTransformation = if (passwordVisible) VisualTransformation.None else PasswordVisualTransformation(),
                     modifier = Modifier.width(300.dp),
@@ -240,27 +268,41 @@ fun LoginScreen() {
                         when {
                             email.isBlank() || password.isBlank() -> {
                                 Toast.makeText(
-                                    context, "Please fill in all fields", Toast.LENGTH_SHORT
+                                    context,
+                                    "Please enter both email and password",
+                                    Toast.LENGTH_SHORT
                                 ).show()
                             }
-
                             !Patterns.EMAIL_ADDRESS.matcher(email).matches() -> {
                                 Toast.makeText(context, "Invalid email format", Toast.LENGTH_SHORT)
                                     .show()
                             }
-
                             else -> {
                                 scope.launch {
                                     isLoading = true
                                     val (success, role, errorCode) = repo.loginUser(
-                                        email.trim(), password.trim()
+                                        email.trim(),
+                                        password.trim()
                                     )
                                     isLoading = false
 
                                     if (success) {
                                         Toast.makeText(
-                                            context, "Login successful!", Toast.LENGTH_SHORT
+                                            context,
+                                            "Login successful",
+                                            Toast.LENGTH_SHORT
                                         ).show()
+
+                                        val sharedPref = context.getSharedPreferences(
+                                            "user_session",
+                                            Context.MODE_PRIVATE
+                                        )
+                                        with(sharedPref.edit()) {
+                                            putString("user_email", email.trim())
+                                            putString("user_role", role)
+                                            apply()
+                                        }
+
                                         val intent = when (role) {
                                             "admin" -> Intent(
                                                 context,
@@ -268,7 +310,8 @@ fun LoginScreen() {
                                             )
 
                                             else -> Intent(
-                                                context, CommunitySpaceActivity::class.java
+                                                context,
+                                                CommunitySpaceActivity::class.java
                                             )
                                         }
                                         intent.flags =
@@ -291,7 +334,8 @@ fun LoginScreen() {
                         .height(35.dp),
                     shape = RoundedCornerShape(24.dp),
                     colors = ButtonDefaults.buttonColors(
-                        containerColor = Color(0xFFFACC15), contentColor = textColor
+                        containerColor = Color(0xFFFACC15),
+                        contentColor = textColor
                     )
                 ) {
                     if (isLoading) {
@@ -316,19 +360,22 @@ fun LoginScreen() {
                 }
 
                 ClickableText(
-                    text = registerText, style = TextStyle(
+                    text = registerText,
+                    style = TextStyle(
                         fontSize = 14.sp,
                         color = textColor,
                         textAlign = TextAlign.Center,
                         fontFamily = InterFontFamily
-                    ), onClick = { offset ->
+                    ),
+                    onClick = { offset ->
                         val registerPart = "Register Now"
                         val startIndex = registerText.indexOf(registerPart)
                         val endIndex = startIndex + registerPart.length
                         if (offset in startIndex until endIndex) {
                             context.startActivity(Intent(context, RegisterActivity::class.java))
                         }
-                    })
+                    }
+                )
 
                 Spacer(modifier = Modifier.height(32.dp))
 
@@ -337,14 +384,17 @@ fun LoginScreen() {
                 }
 
                 ClickableText(
-                    text = resetText, style = TextStyle(
+                    text = resetText,
+                    style = TextStyle(
                         fontSize = 14.sp,
                         color = textColor,
                         textAlign = TextAlign.Center,
                         fontFamily = InterFontFamily
-                    ), onClick = {
+                    ),
+                    onClick = {
                         context.startActivity(Intent(context, ResetPasswordActivity::class.java))
-                    })
+                    }
+                )
             }
         }
     }
