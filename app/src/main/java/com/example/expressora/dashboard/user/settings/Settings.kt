@@ -86,6 +86,14 @@ import com.example.expressora.dashboard.user.quiz.QuizActivity
 import com.example.expressora.dashboard.user.translation.TranslationActivity
 import com.example.expressora.ui.theme.InterFontFamily
 import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.firestore.FirebaseFirestore
+import androidx.compose.ui.window.Dialog
+import android.content.Context
+import androidx.compose.material3.*
+import com.example.expressora.dashboard.admin.settings.AdminSettingsRow
+import com.example.expressora.dashboard.admin.settings.ConfirmStyledDialog
+
+private val MutedText = Color(0xFF666666)
 
 class SettingsActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -146,22 +154,26 @@ class SettingsActivity : ComponentActivity() {
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(navController: NavHostController) {
     val settingsItems = listOf(
         "Personal Information", "Account Information", "Preferences", "Log Out"
     )
     val context = LocalContext.current
+    val logoutDialogVisible = remember { mutableStateOf(false) }
 
     Scaffold(
         topBar = {
-            TopNav(notificationCount = 2, onProfileClick = {
-                { /* already in settings */ }
-            }, onTranslateClick = {
-                context.startActivity(Intent(context, CommunitySpaceActivity::class.java))
-            }, onNotificationClick = {
-                context.startActivity(Intent(context, NotificationActivity::class.java))
-            })
+            TopNav(
+                notificationCount = 2,
+                onProfileClick = { /* already in user settings */ },
+                onTranslateClick = {
+                    context.startActivity(Intent(context, CommunitySpaceActivity::class.java))
+                },
+                onNotificationClick = {
+                    context.startActivity(Intent(context, NotificationActivity::class.java))
+                })
         }, bottomBar = {
             BottomNav(onLearnClick = {
                 context.startActivity(Intent(context, LearnActivity::class.java))
@@ -186,38 +198,105 @@ fun SettingsScreen(navController: NavHostController) {
             )
 
             settingsItems.forEach { item ->
-                SettingsRow(
+                AdminSettingsRow(
                     label = item, showArrow = item != "Log Out", onClick = {
                         when (item) {
                             "Personal Information", "Account Information" -> navController.navigate(
                                 "profile/${item}"
                             )
 
-                            "Preferences" -> navController.navigate("preferences/Preferences")
+                            "Preferences" -> navController.navigate("preferences/${item}")
 
-
-                            "Log Out" -> {
-                                FirebaseAuth.getInstance().signOut()
-
-                                val sharedPref = context.getSharedPreferences(
-                                    "user_session", android.content.Context.MODE_PRIVATE
-                                )
-                                with(sharedPref.edit()) {
-                                    clear()
-                                    apply()
-                                }
-
-                                val intent = Intent(context, LoginActivity::class.java)
-                                intent.flags =
-                                    Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
-                                context.startActivity(intent)
-                            }
+                            "Log Out" -> logoutDialogVisible.value = true
                         }
                     })
             }
         }
+
+        if (logoutDialogVisible.value) {
+            ConfirmStyledDialog(
+                title = "Log Out",
+                message = "Are you sure you want to log out?",
+                confirmText = "Yes",
+                confirmColor = Color(0xFFFACC15),
+                confirmTextColor = Color.Black,
+                onDismiss = { logoutDialogVisible.value = false },
+                onConfirm = {
+                    logoutDialogVisible.value = false
+                    performLogout(context)
+                })
+        }
     }
 }
+
+@Composable
+fun ConfirmStyledDialog(
+    title: String,
+    message: String,
+    confirmText: String,
+    confirmColor: Color,
+    onDismiss: () -> Unit,
+    onConfirm: () -> Unit,
+    confirmTextColor: Color = Color.White
+) {
+    Dialog(onDismissRequest = onDismiss) {
+        Surface(
+            shape = RoundedCornerShape(16.dp),
+            tonalElevation = 8.dp,
+            color = Color.White,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Text(
+                    text = title,
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.Bold,
+                    fontFamily = InterFontFamily
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(message, color = MutedText)
+                Spacer(modifier = Modifier.height(16.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    TextButton(
+                        onClick = onDismiss,
+                        colors = ButtonDefaults.textButtonColors(contentColor = Color.Gray)
+                    ) {
+                        Text("Cancel", color = Color(0xFF666666))
+                    }
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Button(
+                        onClick = onConfirm, colors = ButtonDefaults.buttonColors(
+                            containerColor = confirmColor, contentColor = confirmTextColor
+                        )
+                    ) {
+                        Text(confirmText)
+                    }
+                }
+            }
+        }
+    }
+}
+
+fun performLogout(context: Context) {
+    FirebaseAuth.getInstance().signOut()
+    FirebaseFirestore.getInstance().clearPersistence()
+
+    val sharedPref = context.getSharedPreferences("user_session", Context.MODE_PRIVATE)
+    with(sharedPref.edit()) {
+        clear()
+        apply()
+    }
+
+    val intent = Intent(context, LoginActivity::class.java).apply {
+        flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+    }
+    context.startActivity(intent)
+}
+
 
 @Composable
 fun SettingsRow(label: String, showArrow: Boolean = true, onClick: () -> Unit) {
@@ -286,7 +365,7 @@ fun AccountInfoScreen(navController: NavHostController, label: String) {
     Scaffold(
         topBar = {
             TopNav(notificationCount = 2, onProfileClick = {
-                { /* already in settings */ }
+                { /* already in user settings */ }
             }, onTranslateClick = {
                 context.startActivity(Intent(context, CommunitySpaceActivity::class.java))
             }, onNotificationClick = {
@@ -554,7 +633,7 @@ fun ChangeEmailScreen(label: String) {
     Scaffold(
         topBar = {
             TopNav(notificationCount = 2, onProfileClick = {
-                { /* already in settings */ }
+                { /* already in user settings */ }
             }, onTranslateClick = {
                 context.startActivity(Intent(context, CommunitySpaceActivity::class.java))
             }, onNotificationClick = {
@@ -689,7 +768,7 @@ fun ChangePasswordScreen(label: String) {
     Scaffold(
         topBar = {
             TopNav(notificationCount = 2, onProfileClick = {
-                { /* already in settings */ }
+                { /* already in user settings */ }
             }, onTranslateClick = {
                 context.startActivity(Intent(context, CommunitySpaceActivity::class.java))
             }, onNotificationClick = {
@@ -858,7 +937,7 @@ fun PreferencesScreen(label: String) {
     Scaffold(
         topBar = {
             TopNav(notificationCount = 2, onProfileClick = {
-                { /* already in settings */ }
+                { /* already in user settings */ }
             }, onTranslateClick = {
                 context.startActivity(Intent(context, CommunitySpaceActivity::class.java))
             }, onNotificationClick = {

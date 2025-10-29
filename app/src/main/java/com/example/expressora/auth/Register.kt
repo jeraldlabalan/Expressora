@@ -1,5 +1,6 @@
 package com.example.expressora.auth
 
+import java.security.MessageDigest
 import android.content.Context
 import android.content.Intent
 import android.os.Build
@@ -42,6 +43,7 @@ import androidx.compose.material3.TextFieldColors
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -50,6 +52,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
+import kotlinx.coroutines.delay
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
@@ -173,10 +176,6 @@ class RegisterActivity : ComponentActivity() {
         }
     }
 
-    /**
-     * Checks Firestore if the email already exists.
-     * If not, proceeds to send OTP and move to step 2.
-     */
     private fun checkAndSendOtp(email: String, password: String) {
         if (email.isBlank() || password.isBlank()) {
             Toast.makeText(context, "Please enter both email and password", Toast.LENGTH_SHORT)
@@ -215,7 +214,7 @@ class RegisterActivity : ComponentActivity() {
             try {
                 val json = JSONObject().apply { put("email", email) }
                 val body = json.toString().toRequestBody("application/json".toMediaTypeOrNull())
-                val request = Request.Builder().url("$baseUrl/send-otp").post(body)
+                val request = Request.Builder().url("$baseUrl/reg-send-otp").post(body)
                     .addHeader("Content-Type", "application/json").build()
 
                 val response = client.newCall(request).execute()
@@ -251,7 +250,7 @@ class RegisterActivity : ComponentActivity() {
                     put("otp", enteredOtp)
                 }
                 val body = json.toString().toRequestBody("application/json".toMediaTypeOrNull())
-                val request = Request.Builder().url("$baseUrl/verify-otp").post(body)
+                val request = Request.Builder().url("$baseUrl/reg-verify-otp").post(body)
                     .addHeader("Content-Type", "application/json").build()
 
                 val response = client.newCall(request).execute()
@@ -276,15 +275,16 @@ class RegisterActivity : ComponentActivity() {
     }
 
     private fun saveUserToFirestore() {
+        val hashedPassword = MessageDigest.getInstance("SHA-256").digest(otpPassword.toByteArray())
+            .joinToString("") { "%02x".format(it) }
+
         firebaseAuth.createUserWithEmailAndPassword(otpEmail, otpPassword)
             .addOnSuccessListener { authResult ->
                 val uid = authResult.user?.uid
                 if (uid != null) {
-                    println("DEBUG: Firebase Auth user created with UID: $uid")
-
                     val user = hashMapOf(
                         "email" to otpEmail,
-                        "password" to otpPassword.hashCode().toString(),
+                        "password" to hashedPassword,
                         "firstName" to "",
                         "lastName" to "",
                         "profile" to "",
@@ -292,44 +292,30 @@ class RegisterActivity : ComponentActivity() {
                         "createdAt" to Date()
                     )
                     firestore.collection("users").document(uid).set(user).addOnSuccessListener {
-                        println("DEBUG: User data saved to Firestore")
-
-                        firebaseAuth.signOut()
-
-                        val sharedPref = getSharedPreferences("user_session", MODE_PRIVATE)
-                        with(sharedPref.edit()) {
-                            clear()
-                            apply()
-                        }
-
                         Toast.makeText(context, "Registration successful", Toast.LENGTH_SHORT)
                             .show()
-                        isRegistrationComplete = true
 
-                        val intent = Intent(this, LoginActivity::class.java)
-                        intent.flags =
-                            Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
-                        startActivity(intent)
+                        currentStep = 1
+                        isOtpSent = false
+                        otpEmail = ""
+                        otpPassword = ""
+
+                        firebaseAuth.signOut()
+                        startActivity(Intent(this, LoginActivity::class.java))
                         finish()
                     }.addOnFailureListener { e ->
-                        println("DEBUG: Error saving to Firestore: ${e.localizedMessage}")
                         Toast.makeText(
-                            context,
-                            "Error saving user data: ${e.localizedMessage}",
-                            Toast.LENGTH_LONG
+                            context, "Error saving user: ${e.localizedMessage}", Toast.LENGTH_LONG
                         ).show()
                     }
-                } else {
-                    println("DEBUG: No UID returned from Firebase Auth")
-                    Toast.makeText(context, "Error creating user account", Toast.LENGTH_LONG).show()
                 }
             }.addOnFailureListener { e ->
-                println("DEBUG: Firebase Auth creation failed: ${e.localizedMessage}")
                 Toast.makeText(
                     context, "Error creating user: ${e.localizedMessage}", Toast.LENGTH_LONG
                 ).show()
             }
     }
+
 
     private fun signInWithGoogle() {
         val signInIntent = googleSignInClient.signInIntent
@@ -442,7 +428,7 @@ fun RegisterScreen(
     onVerifyOtp: (String) -> Unit = {},
     currentStep: Int = 1
 ) {
-    LocalContext.current
+    val context = LocalContext.current
     val textColor = Color.Black
     val gradient = Brush.verticalGradient(
         colors = listOf(Color(0xFFFACC15), Color(0xFFF8F8F8)), startY = 0f, endY = 1000f
@@ -452,6 +438,21 @@ fun RegisterScreen(
     var password by remember { mutableStateOf("") }
     var otp by remember { mutableStateOf("") }
     var passwordVisible by remember { mutableStateOf(false) }
+
+    var timer by remember { mutableStateOf(180) }
+    var canResend by remember { mutableStateOf(false) }
+
+    if (currentStep == 2) {
+        LaunchedEffect(Unit) {
+            timer = 180
+            canResend = false
+            while (timer > 0) {
+                delay(1000)
+                timer--
+            }
+            canResend = true
+        }
+    }
 
     val customSelectionColors = TextSelectionColors(
         handleColor = Color(0xFFFACC15), backgroundColor = Color(0x33FACC15)
@@ -524,8 +525,50 @@ fun RegisterScreen(
                         Spacer(modifier = Modifier.height(24.dp))
 
                         YellowButton2("Sign Up") {
-                            if (email.isNotBlank() && password.isNotBlank()) {
-                                onSendOtp(email, password)
+                            when {
+                                email.isBlank() || password.isBlank() -> {
+                                    Toast.makeText(
+                                        context,
+                                        "Please enter both email and password",
+                                        Toast.LENGTH_SHORT
+                                    ).show()
+                                }
+
+                                password.length < 8 -> {
+                                    Toast.makeText(
+                                        context,
+                                        "Password must be at least 8 characters long",
+                                        Toast.LENGTH_LONG
+                                    ).show()
+                                }
+
+                                !password.any { it.isDigit() } -> {
+                                    Toast.makeText(
+                                        context,
+                                        "Password must contain at least one number",
+                                        Toast.LENGTH_LONG
+                                    ).show()
+                                }
+
+                                !password.any { it.isLetter() } -> {
+                                    Toast.makeText(
+                                        context,
+                                        "Password must contain at least one letter",
+                                        Toast.LENGTH_LONG
+                                    ).show()
+                                }
+
+                                !password.any { !it.isLetterOrDigit() } -> {
+                                    Toast.makeText(
+                                        context,
+                                        "Password must include at least one special character (e.g., !@#\$%^&*)",
+                                        Toast.LENGTH_LONG
+                                    ).show()
+                                }
+
+                                else -> {
+                                    onSendOtp(email, password)
+                                }
                             }
                         }
 
@@ -566,11 +609,43 @@ fun RegisterScreen(
                         OTPInput2(
                             otpText = otp, onOtpChange = { if (it.length <= 5) otp = it })
 
+                        Spacer(modifier = Modifier.height(16.dp))
+
+                        Text(
+                            text = if (!canResend) "Code expires in ${timer / 60}:${
+                                (timer % 60).toString().padStart(2, '0')
+                            }"
+                            else "Code expired. Please resend OTP.",
+                            color = if (canResend) Color.Red else Color.Gray,
+                            fontSize = 14.sp,
+                            fontFamily = InterFontFamily,
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+
                         Spacer(modifier = Modifier.height(24.dp))
 
-                        YellowButton2("Verify") {
-                            if (otp.length == 5) {
-                                onVerifyOtp(otp)
+                        YellowButton2(
+                            text = if (!canResend) "Verify" else "Resend OTP"
+                        ) {
+                            if (!canResend) {
+                                if (otp.length == 5) {
+                                    onVerifyOtp(otp)
+                                } else {
+                                    Toast.makeText(
+                                        context, "Please enter the 5-digit OTP", Toast.LENGTH_SHORT
+                                    ).show()
+                                }
+                            } else {
+                                otp = ""
+                                timer = 180
+                                canResend = false
+                                Toast.makeText(
+                                    context,
+                                    "A new OTP has been sent to your email.",
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                                onSendOtp(email, password)
                             }
                         }
                     }
@@ -579,6 +654,7 @@ fun RegisterScreen(
         }
     }
 }
+
 
 @Composable
 fun CommonTextFieldColors(textColor: Color): TextFieldColors {
@@ -654,39 +730,39 @@ fun OTPInput2(otpText: String, onOtpChange: (String) -> Unit) {
     ) {
         BasicTextField(
             value = otpText, onValueChange = { onOtpChange(it) }, decorationBox = {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    repeat(5) { index ->
-                        val char = otpText.getOrNull(index)?.toString() ?: ""
-                        Box(
-                            modifier = Modifier
-                                .weight(1f)
-                                .aspectRatio(1f)
-                                .clip(RoundedCornerShape(10.dp))
-                                .border(1.dp, Color.Gray, RoundedCornerShape(10.dp))
-                                .background(Color.White), contentAlignment = Alignment.Center
-                        ) {
-                            Text(
-                                text = char, style = TextStyle(
-                                    color = textColor,
-                                    fontSize = 20.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    textAlign = TextAlign.Center,
-                                    fontFamily = InterFontFamily
-                                )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                repeat(5) { index ->
+                    val char = otpText.getOrNull(index)?.toString() ?: ""
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .aspectRatio(1f)
+                            .clip(RoundedCornerShape(10.dp))
+                            .border(1.dp, Color.Gray, RoundedCornerShape(10.dp))
+                            .background(Color.White), contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = char, style = TextStyle(
+                                color = textColor,
+                                fontSize = 20.sp,
+                                fontWeight = FontWeight.Bold,
+                                textAlign = TextAlign.Center,
+                                fontFamily = InterFontFamily
                             )
-                        }
+                        )
                     }
                 }
-            }, textStyle = TextStyle(
-                fontSize = 20.sp,
-                fontWeight = FontWeight.Bold,
-                color = textColor,
-                textAlign = TextAlign.Center
-            )
+            }
+        }, textStyle = TextStyle(
+            fontSize = 20.sp,
+            fontWeight = FontWeight.Bold,
+            color = textColor,
+            textAlign = TextAlign.Center
+        )
         )
     }
 }

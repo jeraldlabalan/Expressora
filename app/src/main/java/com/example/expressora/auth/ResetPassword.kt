@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.os.Bundle
+import android.util.Log
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -38,6 +39,7 @@ import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -47,6 +49,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -65,6 +68,7 @@ import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FirebaseFirestore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
@@ -72,6 +76,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
+import java.security.MessageDigest
 import java.util.concurrent.TimeUnit
 
 class ResetPasswordActivity : ComponentActivity() {
@@ -126,7 +131,15 @@ class ResetPasswordActivity : ComponentActivity() {
             ExpressoraTheme {
                 ResetPasswordScreen(
                     onSendOtp = { email -> checkEmailAndSendOtp(email) },
-                    onVerifyOtp = { otp -> verifyOtp(otp) },
+                    onVerifyOtp = { otp ->
+                        if (resetEmail.isNotBlank()) {
+                            verifyOtp(otp)
+                        } else {
+                            Toast.makeText(
+                                context, "Missing email, please re-enter.", Toast.LENGTH_SHORT
+                            ).show()
+                        }
+                    },
                     onResetPassword = { newPassword, confirmPassword ->
                         resetPassword(newPassword, confirmPassword)
                     },
@@ -137,7 +150,6 @@ class ResetPasswordActivity : ComponentActivity() {
     }
 
     private fun redirectToDashboard(uid: String) {
-        val firestore = FirebaseFirestore.getInstance()
         firestore.collection("users").document(uid).get().addOnSuccessListener { doc ->
             val role = doc.getString("role") ?: "user"
             val intent = when (role) {
@@ -153,16 +165,14 @@ class ResetPasswordActivity : ComponentActivity() {
         }
     }
 
-    /**
-     * Checks if email exists in Firestore, then sends OTP
-     */
     private fun checkEmailAndSendOtp(email: String) {
         if (email.isBlank()) {
             Toast.makeText(context, "Please enter your email", Toast.LENGTH_SHORT).show()
             return
         }
 
-        firestore.collection("users").whereEqualTo("email", email.trim()).get()
+        val normalizedEmail = email.trim().lowercase()
+        firestore.collection("users").whereEqualTo("email", normalizedEmail).get()
             .addOnSuccessListener { snapshot ->
                 if (snapshot.isEmpty) {
                     Toast.makeText(
@@ -171,8 +181,8 @@ class ResetPasswordActivity : ComponentActivity() {
                         Toast.LENGTH_LONG
                     ).show()
                 } else {
-                    resetEmail = email.trim()
-                    sendOtp(email.trim())
+                    resetEmail = normalizedEmail
+                    sendOtp(normalizedEmail)
                 }
             }.addOnFailureListener { e ->
                 Toast.makeText(
@@ -189,7 +199,7 @@ class ResetPasswordActivity : ComponentActivity() {
             try {
                 val json = JSONObject().apply { put("email", email) }
                 val body = json.toString().toRequestBody("application/json".toMediaTypeOrNull())
-                val request = Request.Builder().url("$baseUrl/send-otp").post(body)
+                val request = Request.Builder().url("$baseUrl/reset-send-otp").post(body)
                     .addHeader("Content-Type", "application/json").build()
 
                 val response = client.newCall(request).execute()
@@ -225,7 +235,7 @@ class ResetPasswordActivity : ComponentActivity() {
                     put("otp", enteredOtp)
                 }
                 val body = json.toString().toRequestBody("application/json".toMediaTypeOrNull())
-                val request = Request.Builder().url("$baseUrl/verify-otp").post(body)
+                val request = Request.Builder().url("$baseUrl/reset-verify-otp").post(body)
                     .addHeader("Content-Type", "application/json").build()
 
                 val response = client.newCall(request).execute()
@@ -252,66 +262,93 @@ class ResetPasswordActivity : ComponentActivity() {
 
     private fun resetPassword(newPassword: String, confirmPassword: String) {
         if (newPassword.isBlank() || confirmPassword.isBlank()) {
-            Toast.makeText(context, "Please enter both fields", Toast.LENGTH_SHORT).show()
+            Toast.makeText(context, "Please fill both fields", Toast.LENGTH_SHORT).show()
             return
         }
-
         if (newPassword != confirmPassword) {
             Toast.makeText(context, "Passwords do not match", Toast.LENGTH_SHORT).show()
             return
         }
-
-        if (newPassword.length < 6) {
-            Toast.makeText(context, "Password must be at least 6 characters", Toast.LENGTH_SHORT)
-                .show()
+        if (newPassword.length < 8) {
+            Toast.makeText(
+                context, "Password must be at least 8 characters long", Toast.LENGTH_LONG
+            ).show()
             return
         }
 
-        firestore.collection("users").whereEqualTo("email", resetEmail).get()
-            .addOnSuccessListener { snapshot ->
-                if (!snapshot.isEmpty) {
-                    val document = snapshot.documents[0]
+        val LOCAL_HOST_IP = "192.168.1.9"
+        val baseUrl = if (isEmulator()) "http://10.0.2.2:3000" else "http://$LOCAL_HOST_IP:3000"
 
-                    document.reference.update("password", newPassword.hashCode().toString())
-                        .addOnSuccessListener {
-                            val sharedPref =
-                                getSharedPreferences("user_session", MODE_PRIVATE)
-                            with(sharedPref.edit()) {
-                                clear()
-                                apply()
-                            }
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                val hashedPassword =
+                    MessageDigest.getInstance("SHA-256").digest(newPassword.toByteArray())
+                        .joinToString("") { "%02x".format(it) }
 
-                            Toast.makeText(context, "Password reset successful", Toast.LENGTH_SHORT)
-                                .show()
-                            isPasswordReset = true
-
-                            val intent = Intent(this, LoginActivity::class.java)
-                            intent.flags =
-                                Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
-                            startActivity(intent)
-                            finish()
-                        }.addOnFailureListener { e ->
-                            Toast.makeText(
-                                context,
-                                "Error updating password: ${e.localizedMessage}",
-                                Toast.LENGTH_LONG
-                            ).show()
-                        }
-                } else {
-                    Toast.makeText(context, "User not found", Toast.LENGTH_SHORT).show()
+                val json = JSONObject().apply {
+                    put("email", resetEmail.lowercase())
+                    put("newPassword", hashedPassword)
                 }
-            }.addOnFailureListener { e ->
-                Toast.makeText(
-                    context, "Error finding user: ${e.localizedMessage}", Toast.LENGTH_LONG
-                ).show()
+                val body = json.toString().toRequestBody("application/json".toMediaTypeOrNull())
+
+                val request = Request.Builder().url("$baseUrl/reset-password").post(body)
+                    .addHeader("Content-Type", "application/json").build()
+
+                val response = client.newCall(request).execute()
+                val responseBody = response.body?.string().orEmpty()
+                Log.d("ResetPassword", "Response: $responseBody")
+
+                withContext(Dispatchers.Main) {
+                    if (response.isSuccessful) {
+                        val message = if (responseBody.trim().startsWith("{")) {
+                            try {
+                                JSONObject(responseBody).optString(
+                                    "message", "Password reset successful!"
+                                )
+                            } catch (_: Exception) {
+                                "Password reset successful!"
+                            }
+                        } else {
+                            responseBody.ifBlank { "Password reset successful!" }
+                        }
+
+                        Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+                        val intent = Intent(context, LoginActivity::class.java)
+                        intent.flags =
+                            Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+                        startActivity(intent)
+                        finish()
+
+                    } else {
+                        val message = if (responseBody.trim().startsWith("{")) {
+                            try {
+                                JSONObject(responseBody).optString(
+                                    "message", "Password reset failed"
+                                )
+                            } catch (_: Exception) {
+                                "Password reset failed"
+                            }
+                        } else {
+                            responseBody.ifBlank { "Password reset failed" }
+                        }
+                        Toast.makeText(context, message, Toast.LENGTH_LONG).show()
+                    }
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(context, "Error: ${e.localizedMessage}", Toast.LENGTH_LONG)
+                        .show()
+                }
             }
+        }
     }
+
 
     private fun isEmulator(): Boolean {
         return (Build.FINGERPRINT.startsWith("generic") || Build.FINGERPRINT.lowercase()
             .contains("vbox") || Build.MODEL.contains("Emulator") || Build.MODEL.contains("Android SDK built for x86") || Build.MANUFACTURER.contains(
             "Genymotion"
-        ) || Build.BRAND.startsWith("generic") && Build.DEVICE.startsWith("generic"))
+        ) || (Build.BRAND.startsWith("generic") && Build.DEVICE.startsWith("generic")))
     }
 }
 
@@ -331,6 +368,22 @@ fun ResetPasswordScreen(
     var otp by remember { mutableStateOf("") }
     var newPassword by remember { mutableStateOf("") }
     var confirmPassword by remember { mutableStateOf("") }
+
+    var timer by remember { mutableStateOf(180) }
+    var canResend by remember { mutableStateOf(false) }
+
+    if (currentStep == 2) {
+        LaunchedEffect(Unit) {
+            timer = 180
+            canResend = false
+            while (timer > 0) {
+                delay(1000)
+                timer--
+            }
+            canResend = true
+        }
+    }
+
 
     Box(
         modifier = Modifier
@@ -399,14 +452,51 @@ fun ResetPasswordScreen(
                 }
 
                 2 -> {
-                    OTPInput(otpText = otp, onOtpChange = { if (it.length <= 5) otp = it })
+                    val context = LocalContext.current
+
+                    OTPInput(
+                        otpText = otp, onOtpChange = { if (it.length <= 5) otp = it })
+
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    Text(
+                        text = if (!canResend) "Code expires in ${timer / 60}:${
+                            (timer % 60).toString().padStart(2, '0')
+                        }"
+                        else "Code expired. Please resend OTP.",
+                        color = if (canResend) Color.Red else Color.Gray,
+                        fontSize = 14.sp,
+                        fontFamily = InterFontFamily,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
                     Spacer(modifier = Modifier.height(24.dp))
-                    YellowButton("Verify") {
-                        if (otp.length == 5) {
-                            onVerifyOtp(otp)
+
+                    YellowButton(
+                        text = if (!canResend) "Verify" else "Resend OTP"
+                    ) {
+                        if (!canResend) {
+                            if (otp.length == 5) {
+                                onVerifyOtp(otp)
+                            } else {
+                                Toast.makeText(
+                                    context, "Please enter the 5-digit OTP", Toast.LENGTH_SHORT
+                                ).show()
+                            }
+                        } else {
+                            onSendOtp(email)
+                            timer = 180
+                            canResend = false
+                            Toast.makeText(
+                                context,
+                                "A new OTP has been sent to your email.",
+                                Toast.LENGTH_SHORT
+                            ).show()
                         }
                     }
                 }
+
 
                 3 -> {
                     StyledTextField(
@@ -523,39 +613,39 @@ fun OTPInput(
     ) {
         BasicTextField(
             value = otpText, onValueChange = { onOtpChange(it) }, decorationBox = {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    repeat(5) { index ->
-                        val char = otpText.getOrNull(index)?.toString() ?: ""
-                        Box(
-                            modifier = Modifier
-                                .weight(1f)
-                                .aspectRatio(1f)
-                                .clip(RoundedCornerShape(10.dp))
-                                .border(1.dp, Color.Gray, RoundedCornerShape(10.dp))
-                                .background(Color.White), contentAlignment = Alignment.Center
-                        ) {
-                            Text(
-                                text = char, style = TextStyle(
-                                    color = textColor,
-                                    fontSize = 20.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    textAlign = TextAlign.Center,
-                                    fontFamily = InterFontFamily
-                                )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                repeat(5) { index ->
+                    val char = otpText.getOrNull(index)?.toString() ?: ""
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .aspectRatio(1f)
+                            .clip(RoundedCornerShape(10.dp))
+                            .border(1.dp, Color.Gray, RoundedCornerShape(10.dp))
+                            .background(Color.White), contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = char, style = TextStyle(
+                                color = textColor,
+                                fontSize = 20.sp,
+                                fontWeight = FontWeight.Bold,
+                                textAlign = TextAlign.Center,
+                                fontFamily = InterFontFamily
                             )
-                        }
+                        )
                     }
                 }
-            }, textStyle = TextStyle(
-                fontSize = 20.sp,
-                fontWeight = FontWeight.Bold,
-                color = textColor,
-                textAlign = TextAlign.Center
-            )
+            }
+        }, textStyle = TextStyle(
+            fontSize = 20.sp,
+            fontWeight = FontWeight.Bold,
+            color = textColor,
+            textAlign = TextAlign.Center
+        )
         )
     }
 }

@@ -79,7 +79,13 @@ import com.example.expressora.dashboard.admin.learningmanagement.LearningManagem
 import com.example.expressora.dashboard.admin.notification.NotificationActivity
 import com.example.expressora.dashboard.admin.quizmanagement.QuizManagementActivity
 import com.example.expressora.ui.theme.InterFontFamily
+import android.content.Context
+import androidx.compose.material3.*
 import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.firestore.FirebaseFirestore
+import androidx.compose.ui.window.Dialog
+
+private val MutedText = Color(0xFF666666)
 
 class AdminSettingsActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -132,51 +138,37 @@ class AdminSettingsActivity : ComponentActivity() {
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AdminSettingsScreen(navController: NavHostController) {
-    val settingsItems = listOf(
-        "Personal Information", "Account Information", "Log Out"
-    )
+    val settingsItems = listOf("Personal Information", "Account Information", "Log Out")
     val context = LocalContext.current
+    val logoutDialogVisible = remember { mutableStateOf(false) }
 
     Scaffold(
         topBar = {
-            TopNav(notificationCount = 2, onProfileClick = {
-                { /* already in admin settings */ }
-            }, onTranslateClick = {
+        TopNav(
+            notificationCount = 2,
+            onProfileClick = { /* already in admin settings */ },
+            onTranslateClick = {
                 context.startActivity(
                     Intent(
                         context, CommunitySpaceManagementActivity::class.java
                     )
                 )
-            }, onNotificationClick = {
-                context.startActivity(
-                    Intent(
-                        context, NotificationActivity::class.java
-                    )
-                )
+            },
+            onNotificationClick = {
+                context.startActivity(Intent(context, NotificationActivity::class.java))
             })
-        }, bottomBar = {
-            BottomNav2(onLearnClick = {
-                context.startActivity(
-                    Intent(
-                        context, LearningManagementActivity::class.java
-                    )
-                )
-            }, onAnalyticsClick = {
-                context.startActivity(
-                    Intent(
-                        context, AnalyticsDashboardActivity::class.java
-                    )
-                )
-            }, onQuizClick = {
-                context.startActivity(
-                    Intent(
-                        context, QuizManagementActivity::class.java
-                    )
-                )
-            })
-        }, containerColor = Color(0xFFF8F8F8)
+    }, bottomBar = {
+        BottomNav2(onLearnClick = {
+            context.startActivity(Intent(context, LearningManagementActivity::class.java))
+        }, onAnalyticsClick = {
+            context.startActivity(Intent(context, AnalyticsDashboardActivity::class.java))
+        }, onQuizClick = {
+            context.startActivity(Intent(context, QuizManagementActivity::class.java))
+        })
+    }, containerColor = Color(0xFFF8F8F8)
     ) { paddingValues ->
         Column(
             modifier = Modifier
@@ -199,40 +191,102 @@ fun AdminSettingsScreen(navController: NavHostController) {
                                 "profile/${item}"
                             )
 
-                            "Preferences" -> navController.navigate("preferences/Preferences")
-
-
-                            "Log Out" -> {
-                                FirebaseAuth.getInstance().signOut()
-
-                                val sharedPref = context.getSharedPreferences(
-                                    "user_session", android.content.Context.MODE_PRIVATE
-                                )
-                                with(sharedPref.edit()) {
-                                    clear()
-                                    apply()
-                                }
-
-                                val intent = Intent(context, LoginActivity::class.java)
-                                intent.flags =
-                                    Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
-                                context.startActivity(intent)
-                            }
-
+                            "Log Out" -> logoutDialogVisible.value = true
                         }
                     })
             }
+        }
+
+        if (logoutDialogVisible.value) {
+            ConfirmStyledDialog(
+                title = "Log Out",
+                message = "Are you sure you want to log out?",
+                confirmText = "Yes",
+                confirmColor = Color(0xFFFACC15),
+                confirmTextColor = Color.Black,
+                onDismiss = { logoutDialogVisible.value = false },
+                onConfirm = {
+                    logoutDialogVisible.value = false
+                    performLogout(context)
+                })
         }
     }
 }
 
 @Composable
+fun ConfirmStyledDialog(
+    title: String,
+    message: String,
+    confirmText: String,
+    confirmColor: Color,
+    onDismiss: () -> Unit,
+    onConfirm: () -> Unit,
+    confirmTextColor: Color = Color.White
+) {
+    Dialog(onDismissRequest = onDismiss) {
+        Surface(
+            shape = RoundedCornerShape(16.dp),
+            tonalElevation = 8.dp,
+            color = Color.White,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Text(
+                    text = title,
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.Bold,
+                    fontFamily = InterFontFamily
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(message, color = MutedText)
+                Spacer(modifier = Modifier.height(16.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    TextButton(
+                        onClick = onDismiss,
+                        colors = ButtonDefaults.textButtonColors(contentColor = Color.Gray)
+                    ) {
+                        Text("Cancel", color = Color(0xFF666666))
+                    }
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Button(
+                        onClick = onConfirm, colors = ButtonDefaults.buttonColors(
+                            containerColor = confirmColor, contentColor = confirmTextColor
+                        )
+                    ) {
+                        Text(confirmText)
+                    }
+                }
+            }
+        }
+    }
+}
+
+fun performLogout(context: Context) {
+    FirebaseAuth.getInstance().signOut()
+    FirebaseFirestore.getInstance().clearPersistence()
+
+    val sharedPref = context.getSharedPreferences("user_session", Context.MODE_PRIVATE)
+    with(sharedPref.edit()) {
+        clear()
+        apply()
+    }
+
+    val intent = Intent(context, LoginActivity::class.java).apply {
+        flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+    }
+    context.startActivity(intent)
+}
+
+@Composable
 fun AdminSettingsRow(label: String, showArrow: Boolean = true, onClick: () -> Unit) {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable { onClick() }
-            .background(Color(0xFFF8F8F8))) {
+    Column(modifier = Modifier
+        .fillMaxWidth()
+        .clickable { onClick() }
+        .background(Color(0xFFF8F8F8))) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -261,11 +315,10 @@ fun AdminSettingsRow(label: String, showArrow: Boolean = true, onClick: () -> Un
 
 @Composable
 fun AdminSettingsRowWithSubtitle(label: String, subtitle: String, onClick: () -> Unit) {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable { onClick() }
-            .background(Color(0xFFF8F8F8))) {
+    Column(modifier = Modifier
+        .fillMaxWidth()
+        .clickable { onClick() }
+        .background(Color(0xFFF8F8F8))) {
         Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
             Text(
                 text = label,
@@ -292,42 +345,42 @@ fun AdminAccountInfoScreen(navController: NavHostController, label: String) {
 
     Scaffold(
         topBar = {
-            TopNav(notificationCount = 2, onProfileClick = {
-                { /* already in admin settings */ }
-            }, onTranslateClick = {
-                context.startActivity(
-                    Intent(
-                        context, CommunitySpaceManagementActivity::class.java
-                    )
+        TopNav(notificationCount = 2, onProfileClick = {
+            { /* already in admin settings */ }
+        }, onTranslateClick = {
+            context.startActivity(
+                Intent(
+                    context, CommunitySpaceManagementActivity::class.java
                 )
-            }, onNotificationClick = {
-                context.startActivity(
-                    Intent(
-                        context, NotificationActivity::class.java
-                    )
+            )
+        }, onNotificationClick = {
+            context.startActivity(
+                Intent(
+                    context, NotificationActivity::class.java
                 )
-            })
-        }, bottomBar = {
-            BottomNav2(onLearnClick = {
-                context.startActivity(
-                    Intent(
-                        context, LearningManagementActivity::class.java
-                    )
+            )
+        })
+    }, bottomBar = {
+        BottomNav2(onLearnClick = {
+            context.startActivity(
+                Intent(
+                    context, LearningManagementActivity::class.java
                 )
-            }, onAnalyticsClick = {
-                context.startActivity(
-                    Intent(
-                        context, AnalyticsDashboardActivity::class.java
-                    )
+            )
+        }, onAnalyticsClick = {
+            context.startActivity(
+                Intent(
+                    context, AnalyticsDashboardActivity::class.java
                 )
-            }, onQuizClick = {
-                context.startActivity(
-                    Intent(
-                        context, QuizManagementActivity::class.java
-                    )
+            )
+        }, onQuizClick = {
+            context.startActivity(
+                Intent(
+                    context, QuizManagementActivity::class.java
                 )
-            })
-        }, containerColor = Color(0xFFF8F8F8)
+            )
+        })
+    }, containerColor = Color(0xFFF8F8F8)
     ) { paddingValues ->
         Column(
             modifier = Modifier
@@ -368,26 +421,26 @@ fun AdminUserProfileScreen(label: String) {
 
     Scaffold(
         topBar = {
-            TopNav(
-                notificationCount = 2,
-                onProfileClick = { /* already in admin settings */ },
-                onTranslateClick = {
-                    context.startActivity(
-                        Intent(context, CommunitySpaceManagementActivity::class.java)
-                    )
-                },
-                onNotificationClick = {
-                    context.startActivity(Intent(context, NotificationActivity::class.java))
-                })
-        }, bottomBar = {
-            BottomNav2(onLearnClick = {
-                context.startActivity(Intent(context, LearningManagementActivity::class.java))
-            }, onAnalyticsClick = {
-                context.startActivity(Intent(context, AnalyticsDashboardActivity::class.java))
-            }, onQuizClick = {
-                context.startActivity(Intent(context, QuizManagementActivity::class.java))
+        TopNav(
+            notificationCount = 2,
+            onProfileClick = { /* already in admin settings */ },
+            onTranslateClick = {
+                context.startActivity(
+                    Intent(context, CommunitySpaceManagementActivity::class.java)
+                )
+            },
+            onNotificationClick = {
+                context.startActivity(Intent(context, NotificationActivity::class.java))
             })
-        }, containerColor = Color(0xFFF8F8F8)
+    }, bottomBar = {
+        BottomNav2(onLearnClick = {
+            context.startActivity(Intent(context, LearningManagementActivity::class.java))
+        }, onAnalyticsClick = {
+            context.startActivity(Intent(context, AnalyticsDashboardActivity::class.java))
+        }, onQuizClick = {
+            context.startActivity(Intent(context, QuizManagementActivity::class.java))
+        })
+    }, containerColor = Color(0xFFF8F8F8)
     ) { paddingValues ->
         Box(
             modifier = Modifier
@@ -583,42 +636,42 @@ fun AdminChangeEmailScreen(label: String) {
 
     Scaffold(
         topBar = {
-            TopNav(notificationCount = 2, onProfileClick = {
-                { /* already in admin settings */ }
-            }, onTranslateClick = {
-                context.startActivity(
-                    Intent(
-                        context, CommunitySpaceManagementActivity::class.java
-                    )
+        TopNav(notificationCount = 2, onProfileClick = {
+            { /* already in admin settings */ }
+        }, onTranslateClick = {
+            context.startActivity(
+                Intent(
+                    context, CommunitySpaceManagementActivity::class.java
                 )
-            }, onNotificationClick = {
-                context.startActivity(
-                    Intent(
-                        context, NotificationActivity::class.java
-                    )
+            )
+        }, onNotificationClick = {
+            context.startActivity(
+                Intent(
+                    context, NotificationActivity::class.java
                 )
-            })
-        }, bottomBar = {
-            BottomNav2(onLearnClick = {
-                context.startActivity(
-                    Intent(
-                        context, LearningManagementActivity::class.java
-                    )
+            )
+        })
+    }, bottomBar = {
+        BottomNav2(onLearnClick = {
+            context.startActivity(
+                Intent(
+                    context, LearningManagementActivity::class.java
                 )
-            }, onAnalyticsClick = {
-                context.startActivity(
-                    Intent(
-                        context, AnalyticsDashboardActivity::class.java
-                    )
+            )
+        }, onAnalyticsClick = {
+            context.startActivity(
+                Intent(
+                    context, AnalyticsDashboardActivity::class.java
                 )
-            }, onQuizClick = {
-                context.startActivity(
-                    Intent(
-                        context, QuizManagementActivity::class.java
-                    )
+            )
+        }, onQuizClick = {
+            context.startActivity(
+                Intent(
+                    context, QuizManagementActivity::class.java
                 )
-            })
-        }, containerColor = Color(0xFFF8F8F8)
+            )
+        })
+    }, containerColor = Color(0xFFF8F8F8)
     ) { paddingValues ->
         Box(
             modifier = Modifier
@@ -729,42 +782,42 @@ fun AdminChangePasswordScreen(label: String) {
 
     Scaffold(
         topBar = {
-            TopNav(notificationCount = 2, onProfileClick = {
-                { /* already in admin settings */ }
-            }, onTranslateClick = {
-                context.startActivity(
-                    Intent(
-                        context, CommunitySpaceManagementActivity::class.java
-                    )
+        TopNav(notificationCount = 2, onProfileClick = {
+            { /* already in admin settings */ }
+        }, onTranslateClick = {
+            context.startActivity(
+                Intent(
+                    context, CommunitySpaceManagementActivity::class.java
                 )
-            }, onNotificationClick = {
-                context.startActivity(
-                    Intent(
-                        context, NotificationActivity::class.java
-                    )
+            )
+        }, onNotificationClick = {
+            context.startActivity(
+                Intent(
+                    context, NotificationActivity::class.java
                 )
-            })
-        }, bottomBar = {
-            BottomNav2(onLearnClick = {
-                context.startActivity(
-                    Intent(
-                        context, LearningManagementActivity::class.java
-                    )
+            )
+        })
+    }, bottomBar = {
+        BottomNav2(onLearnClick = {
+            context.startActivity(
+                Intent(
+                    context, LearningManagementActivity::class.java
                 )
-            }, onAnalyticsClick = {
-                context.startActivity(
-                    Intent(
-                        context, AnalyticsDashboardActivity::class.java
-                    )
+            )
+        }, onAnalyticsClick = {
+            context.startActivity(
+                Intent(
+                    context, AnalyticsDashboardActivity::class.java
                 )
-            }, onQuizClick = {
-                context.startActivity(
-                    Intent(
-                        context, QuizManagementActivity::class.java
-                    )
+            )
+        }, onQuizClick = {
+            context.startActivity(
+                Intent(
+                    context, QuizManagementActivity::class.java
                 )
-            })
-        }, containerColor = Color(0xFFF8F8F8)
+            )
+        })
+    }, containerColor = Color(0xFFF8F8F8)
     ) { paddingValues ->
         Box(
             modifier = Modifier
