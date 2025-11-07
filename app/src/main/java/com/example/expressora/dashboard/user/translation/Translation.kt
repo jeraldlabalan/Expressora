@@ -8,11 +8,14 @@ import android.media.AudioManager
 import android.os.Build
 import android.os.Bundle
 import android.speech.tts.TextToSpeech
+import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.viewModels
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.camera.core.CameraSelector
+import androidx.camera.core.ImageAnalysis
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
 import androidx.compose.animation.AnimatedVisibility
@@ -39,6 +42,7 @@ import androidx.compose.material.icons.filled.CloseFullscreen
 import androidx.compose.material.icons.filled.OpenInFull
 import androidx.compose.material.icons.filled.SwapCalls
 import androidx.compose.material.icons.filled.VolumeUp
+import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
@@ -47,6 +51,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -65,15 +70,28 @@ import androidx.core.content.ContextCompat
 import com.example.expressora.components.user_bottom_nav.BottomNav
 import com.example.expressora.dashboard.user.learn.LearnActivity
 import com.example.expressora.dashboard.user.quiz.QuizActivity
+import com.example.expressora.recognition.camera.CameraBitmapAnalyzer
+import com.example.expressora.recognition.di.RecognitionProvider
+import com.example.expressora.recognition.model.GlossEvent
+import com.example.expressora.recognition.mediapipe.HandLandmarkerEngine
+import com.example.expressora.recognition.pipeline.HandToFeaturesBridge
+import com.example.expressora.recognition.pipeline.RecognitionViewModel
 import com.example.expressora.ui.theme.InterFontFamily
 import kotlinx.coroutines.delay
 import java.util.Locale
 import androidx.camera.core.Preview as CameraPreview
 
 class TranslationActivity : ComponentActivity(), TextToSpeech.OnInitListener {
+    private val recognitionViewModel: RecognitionViewModel by viewModels {
+        RecognitionProvider.provideViewModelFactory(this)
+    }
     private var tts: TextToSpeech? = null
     private var ttsReady by mutableStateOf(false)
     private var selectedLanguage by mutableStateOf("English")
+    private lateinit var handEngine: HandLandmarkerEngine
+    private var recognitionEnabled = false
+    private var handEngineReady = false
+    private var assetsReady = false
 
     private val requestPermissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
@@ -83,6 +101,30 @@ class TranslationActivity : ComponentActivity(), TextToSpeech.OnInitListener {
         enableEdgeToEdge()
         tts = TextToSpeech(this, this)
 
+        recognitionEnabled = false
+        handEngineReady = false
+        assetsReady = RecognitionProvider.ensureAssets(this)
+
+        if (assetsReady) {
+            runCatching {
+                handEngine = HandLandmarkerEngine(this).apply {
+                    onResult = { result ->
+                        val hands = HandToFeaturesBridge.extract(result)
+                        val vector = HandToFeaturesBridge.toVec(hands, RecognitionProvider.TWO_HANDS)
+                        recognitionViewModel.onFeatures(vector)
+                    }
+                    onError = { error -> Log.e(HAND_TAG, "Error running hand landmarker", error) }
+                }
+                handEngineReady = true
+            }.onFailure { error ->
+                Log.e(TAG, "Failed to initialize HandLandmarkerEngine", error)
+                handEngineReady = false
+                assetsReady = false
+            }
+        } else {
+            Log.w(TAG, "Recognition assets missing; Start Recognition disabled.")
+        }
+
         if (ContextCompat.checkSelfPermission(
                 this, Manifest.permission.CAMERA
             ) != PackageManager.PERMISSION_GRANTED
@@ -91,7 +133,27 @@ class TranslationActivity : ComponentActivity(), TextToSpeech.OnInitListener {
         }
 
         setContent {
+            val glossEvent by recognitionViewModel.state.collectAsState()
+            var recognitionStarted by remember { mutableStateOf(recognitionEnabled) }
+            val canStartRecognition = assetsReady && handEngineReady
+            val analyzer = remember {
+                CameraBitmapAnalyzer { bitmap ->
+                    try {
+                        if (recognitionEnabled && assetsReady && handEngineReady) {
+                            handEngine.detectAsync(bitmap)
+                        }
+                    } catch (error: Throwable) {
+                        Log.e(HAND_TAG, "detectAsync failed", error)
+                    } finally {
+                        bitmap.recycle()
+                    }
+                }
+            }
             TranslationScreen(
+                glossEvent = glossEvent,
+                onDevPredict = {
+                    recognitionViewModel.onFeatures(RecognitionProvider.zeroFeatureVector())
+                },
                 ttsReady = ttsReady,
                 selectedLanguage = selectedLanguage,
                 onLanguageChanged = { newLang ->
@@ -100,12 +162,26 @@ class TranslationActivity : ComponentActivity(), TextToSpeech.OnInitListener {
                 },
                 speakText = { text ->
                     speakTextAloud(this, tts, text)
-                })
+                },
+                onStartRecognition = {
+                    if (canStartRecognition) {
+                        recognitionEnabled = true
+                        recognitionStarted = true
+                    }
+                },
+                cameraAnalyzer = analyzer,
+                startRecognitionEnabled = canStartRecognition && !recognitionStarted
+            )
         }
     }
 
     override fun onDestroy() {
         super.onDestroy()
+        if (handEngineReady) {
+            handEngine.close()
+            handEngineReady = false
+        }
+        recognitionEnabled = false
         tts?.stop()
         tts?.shutdown()
     }
@@ -119,6 +195,11 @@ class TranslationActivity : ComponentActivity(), TextToSpeech.OnInitListener {
         } else {
             ttsReady = false
         }
+    }
+
+    companion object {
+        private const val TAG = "TranslationActivity"
+        private const val HAND_TAG = "HandLandmarker"
     }
 }
 
@@ -145,10 +226,15 @@ fun speakTextAloud(context: Context, tts: TextToSpeech?, text: String) {
 
 @Composable
 fun TranslationScreen(
+    glossEvent: GlossEvent,
+    onDevPredict: () -> Unit,
     ttsReady: Boolean,
     selectedLanguage: String,
     onLanguageChanged: (String) -> Unit,
-    speakText: (String) -> Unit
+    speakText: (String) -> Unit,
+    onStartRecognition: () -> Unit = {},
+    cameraAnalyzer: ImageAnalysis.Analyzer? = null,
+    startRecognitionEnabled: Boolean = false,
 ) {
     val context = LocalContext.current
     var useFrontCamera by remember { mutableStateOf(false) }
@@ -178,6 +264,13 @@ fun TranslationScreen(
 
     val bgColor = Color(0xFFF8F8F8)
     val cardBgColor = Color(0xFFF8F8F8)
+
+    val glossText = when (val event = glossEvent) {
+        is GlossEvent.StableChunk -> event.tokens.joinToString(" ")
+        is GlossEvent.InProgress -> event.tokens.joinToString(" ")
+        else -> ""
+    }
+    val glossError = (glossEvent as? GlossEvent.Error)?.message
 
     Scaffold(
         bottomBar = {
@@ -213,11 +306,22 @@ fun TranslationScreen(
                         val preview = CameraPreview.Builder().build().also {
                             it.surfaceProvider = previewView.surfaceProvider
                         }
+                        val analysis = ImageAnalysis.Builder()
+                            .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+                            .build()
+                            .also { imageAnalysis ->
+                                cameraAnalyzer?.let { analyzer ->
+                                    imageAnalysis.setAnalyzer(
+                                        ContextCompat.getMainExecutor(context),
+                                        analyzer
+                                    )
+                                }
+                            }
                         val cameraSelector = if (useFrontCamera) CameraSelector.DEFAULT_FRONT_CAMERA
                         else CameraSelector.DEFAULT_BACK_CAMERA
                         cameraProvider.unbindAll()
                         cameraProvider.bindToLifecycle(
-                            lifecycleOwner, cameraSelector, preview
+                            lifecycleOwner, cameraSelector, preview, analysis
                         )
                     } catch (e: Exception) {
                         e.printStackTrace()
@@ -227,6 +331,33 @@ fun TranslationScreen(
 
             AndroidView(
                 modifier = Modifier.fillMaxSize(), factory = { previewView })
+
+            if (glossText.isNotBlank() || glossError != null) {
+                Card(
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .padding(top = 72.dp, start = 16.dp, end = 16.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color(0xE6FFFFFF))
+                ) {
+                    Column(modifier = Modifier.padding(12.dp)) {
+                        Text(
+                            text = glossError ?: glossText,
+                            fontWeight = FontWeight.SemiBold,
+                            fontSize = 16.sp,
+                            color = Color.Black,
+                            fontFamily = InterFontFamily
+                        )
+                        if (glossEvent is GlossEvent.StableChunk) {
+                            Text(
+                                text = "Confidence ${(glossEvent.confidence * 100).toInt()}%",
+                                fontSize = 12.sp,
+                                color = Color.Gray,
+                                fontFamily = InterFontFamily
+                            )
+                        }
+                    }
+                }
+            }
 
             IconButton(
                 onClick = { useFrontCamera = !useFrontCamera },
@@ -425,6 +556,25 @@ fun TranslationScreen(
                     }
                 }
             }
+
+            Button(
+                onClick = onStartRecognition,
+                enabled = startRecognitionEnabled,
+                modifier = Modifier
+                    .align(Alignment.BottomStart)
+                    .padding(24.dp)
+            ) {
+                Text("Start Recognition", fontFamily = InterFontFamily)
+            }
+
+            Button(
+                onClick = onDevPredict,
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(24.dp)
+            ) {
+                Text("Dev Predict", fontFamily = InterFontFamily)
+            }
         }
     }
 }
@@ -433,8 +583,13 @@ fun TranslationScreen(
 @Composable
 fun TranslationScreenPreview() {
     TranslationScreen(
+        glossEvent = GlossEvent.Idle,
+        onDevPredict = {},
         ttsReady = false,
         selectedLanguage = "English",
         onLanguageChanged = {},
-        speakText = {})
+        speakText = {},
+        onStartRecognition = {},
+        startRecognitionEnabled = false
+    )
 }
