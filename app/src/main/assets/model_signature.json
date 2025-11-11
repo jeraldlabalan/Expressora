@@ -1,0 +1,25 @@
+{
+  "model_type": "float32",
+  "inputs": [
+    {
+      "name": "serving_default_input_1:0",
+      "index": 0,
+      "shape": [
+        1,
+        126
+      ],
+      "dtype": "<class 'numpy.float32'>"
+    }
+  ],
+  "outputs": [
+    {
+      "name": "StatefulPartitionedCall:0",
+      "index": 14,
+      "shape": [
+        1,
+        197
+      ],
+      "dtype": "<class 'numpy.float32'>"
+    }
+  ]
+}

@@ -1,0 +1,15 @@
+syntax = "proto3";
+
+option java_package = "com.example.expressora.recognition.persistence";
+option java_multiple_files = true;
+
+message SequenceHistoryStore {
+  repeated SequenceRecord records = 1;
+}
+
+message SequenceRecord {
+  repeated string tokens = 1;
+  int64 timestamp = 2;
+  string origin = 3;
+}
+

@@ -1,0 +1,620 @@
+{
+  "a": {
+    "ASL": 960,
+    "FSL": 960
+  },
+  "b": {
+    "ASL": 602,
+    "FSL": 602
+  },
+  "c": {
+    "ASL": 702,
+    "FSL": 702
+  },
+  "d": {
+    "ASL": 466,
+    "FSL": 466
+  },
+  "e": {
+    "ASL": 826,
+    "FSL": 572
+  },
+  "f": {
+    "ASL": 542,
+    "FSL": 542
+  },
+  "g": {
+    "ASL": 1046,
+    "FSL": 392
+  },
+  "h": {
+    "ASL": 426,
+    "FSL": 426
+  },
+  "i": {
+    "ASL": 414,
+    "FSL": 414
+  },
+  "j": {
+    "ASL": 456,
+    "FSL": 456
+  },
+  "k": {
+    "ASL": 1026,
+    "FSL": 1026
+  },
+  "l": {
+    "ASL": 782,
+    "FSL": 782
+  },
+  "m": {
+    "ASL": 1022,
+    "FSL": 350
+  },
+  "n": {
+    "ASL": 1162,
+    "FSL": 292
+  },
+  "o": {
+    "ASL": 986,
+    "FSL": 986
+  },
+  "p": {
+    "ASL": 902,
+    "FSL": 240
+  },
+  "q": {
+    "ASL": 898,
+    "FSL": 318
+  },
+  "r": {
+    "ASL": 870,
+    "FSL": 870
+  },
+  "s": {
+    "ASL": 1048,
+    "FSL": 1048
+  },
+  "t": {
+    "ASL": 1170,
+    "FSL": 1146
+  },
+  "u": {
+    "ASL": 862,
+    "FSL": 854
+  },
+  "v": {
+    "ASL": 1024,
+    "FSL": 896
+  },
+  "w": {
+    "ASL": 848,
+    "FSL": 848
+  },
+  "x": {
+    "ASL": 224,
+    "FSL": 864
+  },
+  "y": {
+    "ASL": 992,
+    "FSL": 230
+  },
+  "z": {
+    "ASL": 336,
+    "FSL": 336
+  },
+  "play": {
+    "ASL": 476
+  },
+  "read": {
+    "ASL": 562
+  },
+  "run": {
+    "ASL": 520
+  },
+  "sleep": {
+    "ASL": 552
+  },
+  "walk": {
+    "ASL": 618
+  },
+  "write": {
+    "ASL": 570
+  },
+  "black": {
+    "ASL": 612
+  },
+  "blue": {
+    "ASL": 656
+  },
+  "green": {
+    "ASL": 466
+  },
+  "orange": {
+    "ASL": 544
+  },
+  "purple": {
+    "ASL": 550
+  },
+  "red": {
+    "ASL": 584
+  },
+  "white": {
+    "ASL": 526
+  },
+  "yellow": {
+    "ASL": 452
+  },
+  "bad": {
+    "ASL": 584
+  },
+  "come": {
+    "ASL": 562
+  },
+  "drink": {
+    "ASL": 572
+  },
+  "eat": {
+    "ASL": 538
+  },
+  "go": {
+    "ASL": 582
+  },
+  "good": {
+    "ASL": 522
+  },
+  "help": {
+    "ASL": 484
+  },
+  "iloveyou": {
+    "ASL": 428
+  },
+  "like": {
+    "ASL": 572
+  },
+  "need": {
+    "ASL": 468
+  },
+  "no": {
+    "ASL": 506
+  },
+  "stop": {
+    "ASL": 548
+  },
+  "want": {
+    "ASL": 606
+  },
+  "yes": {
+    "ASL": 546
+  },
+  "angry": {
+    "ASL": 464
+  },
+  "exicited": {
+    "ASL": 506
+  },
+  "happy": {
+    "ASL": 564
+  },
+  "sad": {
+    "ASL": 494
+  },
+  "scared": {
+    "ASL": 542
+  },
+  "tired": {
+    "ASL": 432
+  },
+  "goodbye": {
+    "ASL": 474
+  },
+  "hello": {
+    "ASL": 346,
+    "FSL": 590
+  },
+  "hey": {
+    "ASL": 516
+  },
+  "nice": {
+    "ASL": 474
+  },
+  "please": {
+    "ASL": 522
+  },
+  "sorry": {
+    "ASL": 488
+  },
+  "thankyou": {
+    "ASL": 460
+  },
+  "whatsup": {
+    "ASL": 426
+  },
+  "eight": {
+    "ASL": 550
+  },
+  "five": {
+    "ASL": 564
+  },
+  "four": {
+    "ASL": 558
+  },
+  "nine": {
+    "ASL": 508
+  },
+  "one": {
+    "ASL": 522
+  },
+  "seven": {
+    "ASL": 510
+  },
+  "six": {
+    "ASL": 588
+  },
+  "ten": {
+    "ASL": 474
+  },
+  "three": {
+    "ASL": 532
+  },
+  "two": {
+    "ASL": 564
+  },
+  "book": {
+    "ASL": 550
+  },
+  "car": {
+    "ASL": 464
+  },
+  "food": {
+    "ASL": 496
+  },
+  "house": {
+    "ASL": 508
+  },
+  "phone": {
+    "ASL": 604
+  },
+  "thing": {
+    "ASL": 552
+  },
+  "water": {
+    "ASL": 524
+  },
+  "family": {
+    "ASL": 542
+  },
+  "father": {
+    "ASL": 592
+  },
+  "friend": {
+    "ASL": 570
+  },
+  "he": {
+    "ASL": 516
+  },
+  "me": {
+    "ASL": 580
+  },
+  "mother": {
+    "ASL": 610
+  },
+  "she": {
+    "ASL": 546
+  },
+  "they": {
+    "ASL": 354
+  },
+  "we": {
+    "ASL": 506
+  },
+  "you": {
+    "ASL": 546
+  },
+  "farm": {
+    "ASL": 506
+  },
+  "home": {
+    "ASL": 470
+  },
+  "school": {
+    "ASL": 524
+  },
+  "store": {
+    "ASL": 510
+  },
+  "work": {
+    "ASL": 508
+  },
+  "how": {
+    "ASL": 596
+  },
+  "what": {
+    "ASL": 608
+  },
+  "when": {
+    "ASL": 520
+  },
+  "where": {
+    "ASL": 494
+  },
+  "who": {
+    "ASL": 510
+  },
+  "why": {
+    "ASL": 520
+  },
+  "afternoon": {
+    "ASL": 592
+  },
+  "morning": {
+    "ASL": 606
+  },
+  "night": {
+    "ASL": 604
+  },
+  "today": {
+    "ASL": 454
+  },
+  "tommorow": {
+    "ASL": 590
+  },
+  "yesterday": {
+    "ASL": 572
+  },
+  "basahin": {
+    "FSL": 490
+  },
+  "lakad": {
+    "FSL": 656
+  },
+  "laro": {
+    "FSL": 506
+  },
+  "magsulat": {
+    "FSL": 524
+  },
+  "tulog": {
+    "FSL": 588
+  },
+  "tumakbo": {
+    "FSL": 616
+  },
+  "asul": {
+    "FSL": 562
+  },
+  "berde": {
+    "FSL": 540
+  },
+  "dilaw": {
+    "FSL": 552
+  },
+  "itim": {
+    "FSL": 484
+  },
+  "kahel": {
+    "FSL": 546
+  },
+  "lila": {
+    "FSL": 498
+  },
+  "pula": {
+    "FSL": 540
+  },
+  "puti": {
+    "FSL": 560
+  },
+  "gusto": {
+    "FSL": 520
+  },
+  "halika": {
+    "FSL": 502
+  },
+  "hindi": {
+    "FSL": 492
+  },
+  "inumin": {
+    "FSL": 588
+  },
+  "kailangan": {
+    "FSL": 508
+  },
+  "katulad": {
+    "FSL": 532
+  },
+  "kumain": {
+    "FSL": 590
+  },
+  "mabuti": {
+    "FSL": 588
+  },
+  "mahal_kita": {
+    "FSL": 516
+  },
+  "masama": {
+    "FSL": 592
+  },
+  "oo": {
+    "FSL": 540
+  },
+  "pumunta": {
+    "FSL": 556
+  },
+  "tigil": {
+    "FSL": 594
+  },
+  "tulong": {
+    "FSL": 576
+  },
+  "galit": {
+    "FSL": 546
+  },
+  "malungkot": {
+    "FSL": 508
+  },
+  "masaya": {
+    "FSL": 574
+  },
+  "nasasabik": {
+    "FSL": 668
+  },
+  "pagod": {
+    "FSL": 534
+  },
+  "takot": {
+    "FSL": 574
+  },
+  "anong_balita": {
+    "FSL": 496
+  },
+  "hoy": {
+    "FSL": 600
+  },
+  "nays": {
+    "FSL": 476
+  },
+  "paalam": {
+    "FSL": 530
+  },
+  "pakiusap": {
+    "FSL": 516
+  },
+  "patawad": {
+    "FSL": 630
+  },
+  "salamat": {
+    "FSL": 518
+  },
+  "anim": {
+    "FSL": 594
+  },
+  "apat": {
+    "FSL": 522
+  },
+  "dalawa": {
+    "FSL": 524
+  },
+  "isa": {
+    "FSL": 492
+  },
+  "lima": {
+    "FSL": 516
+  },
+  "pito": {
+    "FSL": 520
+  },
+  "sampu": {
+    "FSL": 538
+  },
+  "siyam": {
+    "FSL": 470
+  },
+  "tatlo": {
+    "FSL": 516
+  },
+  "walo": {
+    "FSL": 496
+  },
+  "bahay": {
+    "FSL": 508
+  },
+  "gamit": {
+    "FSL": 552
+  },
+  "kotse": {
+    "FSL": 464
+  },
+  "libro": {
+    "FSL": 550
+  },
+  "pagkain": {
+    "FSL": 496
+  },
+  "telopono": {
+    "FSL": 576
+  },
+  "tubig": {
+    "FSL": 524
+  },
+  "ako": {
+    "FSL": 580
+  },
+  "ama": {
+    "FSL": 592
+  },
+  "ikaw": {
+    "FSL": 546
+  },
+  "ina": {
+    "FSL": 610
+  },
+  "kaibigan": {
+    "FSL": 516
+  },
+  "pamilya": {
+    "FSL": 542
+  },
+  "sila": {
+    "FSL": 554
+  },
+  "siya(babae)": {
+    "FSL": 528
+  },
+  "siya(lalake)": {
+    "FSL": 510
+  },
+  "tayo": {
+    "FSL": 530
+  },
+  "bukid": {
+    "FSL": 506
+  },
+  "paaralan": {
+    "FSL": 510
+  },
+  "tahanan": {
+    "FSL": 470
+  },
+  "tindahan": {
+    "FSL": 562
+  },
+  "trabaho": {
+    "FSL": 508
+  },
+  "ano": {
+    "FSL": 738
+  },
+  "bakit": {
+    "FSL": 780
+  },
+  "kailan": {
+    "FSL": 780
+  },
+  "paano": {
+    "FSL": 816
+  },
+  "saan": {
+    "FSL": 741
+  },
+  "sino": {
+    "FSL": 765
+  },
+  "bukas": {
+    "FSL": 590
+  },
+  "gabi": {
+    "FSL": 482
+  },
+  "hapon": {
+    "FSL": 592
+  },
+  "kahapon": {
+    "FSL": 572
+  },
+  "ngayon": {
+    "FSL": 476
+  },
+  "umaga": {
+    "FSL": 606
+  }
+}

@@ -12,6 +12,7 @@ plugins {
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.google.gms.google.services)
+    id("com.google.protobuf") version "0.9.4"
 }
 
 android {
@@ -30,10 +31,21 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro"
             )
+        }
+    }
+    
+    // Enable ABI splits for smaller APKs
+    splits {
+        abi {
+            isEnable = true
+            reset()
+            include("armeabi-v7a", "arm64-v8a", "x86", "x86_64")
+            isUniversalApk = true
         }
     }
     compileOptions {
@@ -56,7 +68,27 @@ android {
     }
 }
 
+// Protobuf configuration
+protobuf {
+    protoc {
+        artifact = "com.google.protobuf:protoc:3.21.12"
+    }
+    generateProtoTasks {
+        all().forEach { task ->
+            task.builtins {
+                create("java") {
+                    option("lite")
+                }
+            }
+        }
+    }
+}
+
 dependencies {
+    // Proto DataStore
+    implementation("androidx.datastore:datastore:1.0.0")
+    implementation("com.google.protobuf:protobuf-javalite:3.21.12")
+    
     // Firebase BOM
     implementation(platform("com.google.firebase:firebase-bom:33.4.0"))
 
@@ -90,6 +122,7 @@ dependencies {
 
     // Tensorflow
     implementation("org.tensorflow:tensorflow-lite:2.14.0")
+    implementation("org.tensorflow:tensorflow-lite-gpu:2.14.0")
     implementation("org.tensorflow:tensorflow-lite-support:0.4.4")
     implementation("com.google.mediapipe:tasks-vision:latest.release")
 

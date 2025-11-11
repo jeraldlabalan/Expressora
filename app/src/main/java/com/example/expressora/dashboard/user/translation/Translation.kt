@@ -14,6 +14,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.lifecycle.lifecycleScope
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.lifecycle.ProcessCameraProvider
@@ -34,6 +35,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -72,13 +74,38 @@ import com.example.expressora.dashboard.user.learn.LearnActivity
 import com.example.expressora.dashboard.user.quiz.QuizActivity
 import com.example.expressora.recognition.camera.CameraBitmapAnalyzer
 import com.example.expressora.recognition.di.RecognitionProvider
+import com.example.expressora.recognition.diagnostics.RecognitionDiagnostics
 import com.example.expressora.recognition.model.GlossEvent
 import com.example.expressora.recognition.mediapipe.HandLandmarkerEngine
 import com.example.expressora.recognition.pipeline.HandToFeaturesBridge
 import com.example.expressora.recognition.pipeline.RecognitionViewModel
+import com.example.expressora.recognition.config.PerformanceConfig
+import com.example.expressora.recognition.view.HandLandmarkOverlay
 import com.example.expressora.ui.theme.InterFontFamily
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import java.util.Locale
+import android.util.Size
+import java.util.concurrent.Executors
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context as AndroidContext
+import android.widget.Toast
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.material.icons.filled.Backspace
+import androidx.compose.material.icons.filled.Clear
+import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.Save
+import androidx.compose.material.icons.filled.Send
+import androidx.compose.material.icons.filled.Share
+import androidx.compose.material3.AssistChip
+import androidx.compose.material3.AssistChipDefaults
+import androidx.compose.material3.ElevatedCard
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.OutlinedCard
+import androidx.compose.ui.draw.shadow
 import androidx.camera.core.Preview as CameraPreview
 
 class TranslationActivity : ComponentActivity(), TextToSpeech.OnInitListener {
@@ -92,30 +119,70 @@ class TranslationActivity : ComponentActivity(), TextToSpeech.OnInitListener {
     private var recognitionEnabled = false
     private var handEngineReady = false
     private var assetsReady = false
+    @Volatile
+    private var handLandmarkOverlay: HandLandmarkOverlay? = null
 
     private val requestPermissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
+    
+    // Function to set overlay from Compose
+    internal fun setHandLandmarkOverlay(overlay: HandLandmarkOverlay) {
+        handLandmarkOverlay = overlay
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         tts = TextToSpeech(this, this)
+        
+        // Load Lite Mode preference
+        val prefs = getSharedPreferences("ExpressoraPrefs", Context.MODE_PRIVATE)
+        PerformanceConfig.LITE_MODE_ENABLED = prefs.getBoolean("lite_mode_enabled", false)
 
         recognitionEnabled = false
         handEngineReady = false
         assetsReady = RecognitionProvider.ensureAssets(this)
 
         if (assetsReady) {
+            // Log diagnostics once
+            RecognitionProvider.logDiagnostics(this)
+            
             runCatching {
                 handEngine = HandLandmarkerEngine(this).apply {
                     onResult = { result ->
+                        // Update overlay with landmarks for visualization
+                        handLandmarkOverlay?.setHandLandmarks(result, 640, 480)
+                        
+                        // Continue with recognition
                         val hands = HandToFeaturesBridge.extract(result)
+                        if (hands.left != null || hands.right != null) {
+                            val handCount = listOfNotNull(hands.left, hands.right).size
+                            Log.d(HAND_TAG, "Detected $handCount hand(s)")
+                        }
                         val vector = HandToFeaturesBridge.toVec(hands, RecognitionProvider.TWO_HANDS)
                         recognitionViewModel.onFeatures(vector)
                     }
                     onError = { error -> Log.e(HAND_TAG, "Error running hand landmarker", error) }
                 }
                 handEngineReady = true
+                recognitionEnabled = true  // Auto-start recognition when ready
+                Log.i(TAG, "Recognition auto-started successfully")
+                
+                // Log startup configuration (once, after initialization)
+                lifecycleScope.launch {
+                    // Give classifier time to initialize on first inference
+                    delay(1000)
+                    val classifierDelegate = recognitionViewModel.getClassifierDelegate()
+                    val classifierModel = recognitionViewModel.getClassifierModelVariant()
+                    // MediaPipe Hands typically uses GPU for inference
+                    RecognitionDiagnostics.logStartupConfig(
+                        context = this@TranslationActivity,
+                        handsDelegate = "GPU",  // MediaPipe Hands uses GPU
+                        classifierDelegate = classifierDelegate,
+                        classifierModel = classifierModel,
+                        faceDelegate = "CPU"
+                    )
+                }
             }.onFailure { error ->
                 Log.e(TAG, "Failed to initialize HandLandmarkerEngine", error)
                 handEngineReady = false
@@ -133,26 +200,67 @@ class TranslationActivity : ComponentActivity(), TextToSpeech.OnInitListener {
         }
 
         setContent {
+            val context = LocalContext.current
             val glossEvent by recognitionViewModel.state.collectAsState()
+            val recognitionResult by recognitionViewModel.recognitionResult.collectAsState()
+            val accumulatorState by recognitionViewModel.accumulatorState.collectAsState()
+            val lastBusEvent by recognitionViewModel.lastBusEvent.collectAsState()
+            
             var recognitionStarted by remember { mutableStateOf(recognitionEnabled) }
             val canStartRecognition = assetsReady && handEngineReady
+            
+            // Lite Mode toggle state
+            var liteModeEnabled by remember { mutableStateOf(PerformanceConfig.LITE_MODE_ENABLED) }
             val analyzer = remember {
-                CameraBitmapAnalyzer { bitmap ->
-                    try {
-                        if (recognitionEnabled && assetsReady && handEngineReady) {
-                            handEngine.detectAsync(bitmap)
+                CameraBitmapAnalyzer(
+                    onBitmap = { bitmap ->
+                        try {
+                            if (recognitionEnabled && assetsReady && handEngineReady) {
+                                handEngine.detectAsync(bitmap)
+                            }
+                        } catch (error: Throwable) {
+                            Log.e(HAND_TAG, "detectAsync failed", error)
+                        } finally {
+                            bitmap.recycle()
                         }
-                    } catch (error: Throwable) {
-                        Log.e(HAND_TAG, "detectAsync failed", error)
-                    } finally {
-                        bitmap.recycle()
-                    }
-                }
+                    },
+                    frameSkip = 2
+                )
             }
             TranslationScreen(
                 glossEvent = glossEvent,
+                recognitionResult = recognitionResult,
+                accumulatorState = accumulatorState,
+                lastBusEvent = lastBusEvent,
                 onDevPredict = {
                     recognitionViewModel.onFeatures(RecognitionProvider.zeroFeatureVector())
+                },
+                onBackspace = { recognitionViewModel.backspace() },
+                onClear = { recognitionViewModel.clear() },
+                onSend = { recognitionViewModel.send() },
+                onCopy = {
+                    val json = recognitionViewModel.copySequence()
+                    val clipboard = getSystemService(CLIPBOARD_SERVICE) as ClipboardManager
+                    clipboard.setPrimaryClip(ClipData.newPlainText("Sequence", json))
+                    Toast.makeText(this, "Copied to clipboard", Toast.LENGTH_SHORT).show()
+                },
+                onSave = {
+                    lifecycleScope.launch {
+                        recognitionViewModel.saveSequence()
+                        Toast.makeText(this@TranslationActivity, "Sequence saved", Toast.LENGTH_SHORT).show()
+                    }
+                },
+                onShare = {
+                    lifecycleScope.launch {
+                        val json = recognitionViewModel.exportLastSequence()
+                        if (json != null) {
+                            val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                                type = "text/plain"
+                                putExtra(Intent.EXTRA_TEXT, json)
+                            }
+                            startActivity(Intent.createChooser(shareIntent, "Share sequence"))
+                        }
+                    }
                 },
                 ttsReady = ttsReady,
                 selectedLanguage = selectedLanguage,
@@ -170,7 +278,22 @@ class TranslationActivity : ComponentActivity(), TextToSpeech.OnInitListener {
                     }
                 },
                 cameraAnalyzer = analyzer,
-                startRecognitionEnabled = canStartRecognition && !recognitionStarted
+                startRecognitionEnabled = canStartRecognition && !recognitionStarted,
+                liteModeEnabled = liteModeEnabled,
+                onLiteModeToggle = {
+                    liteModeEnabled = !liteModeEnabled
+                    PerformanceConfig.LITE_MODE_ENABLED = liteModeEnabled
+                    // Persist to SharedPreferences
+                    getSharedPreferences("ExpressoraPrefs", Context.MODE_PRIVATE)
+                        .edit()
+                        .putBoolean("lite_mode_enabled", liteModeEnabled)
+                        .apply()
+                    Toast.makeText(
+                        this,
+                        if (liteModeEnabled) "Lite Mode: ON (15-30 FPS target)" else "Lite Mode: OFF",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                }
             )
         }
     }
@@ -227,7 +350,16 @@ fun speakTextAloud(context: Context, tts: TextToSpeech?, text: String) {
 @Composable
 fun TranslationScreen(
     glossEvent: GlossEvent,
+    recognitionResult: com.example.expressora.recognition.model.RecognitionResult? = null,
+    accumulatorState: com.example.expressora.recognition.accumulator.AccumulatorState = com.example.expressora.recognition.accumulator.AccumulatorState(),
+    lastBusEvent: String? = null,
     onDevPredict: () -> Unit,
+    onBackspace: () -> Unit = {},
+    onClear: () -> Unit = {},
+    onSend: () -> Unit = {},
+    onCopy: () -> Unit = {},
+    onSave: () -> Unit = {},
+    onShare: () -> Unit = {},
     ttsReady: Boolean,
     selectedLanguage: String,
     onLanguageChanged: (String) -> Unit,
@@ -235,15 +367,26 @@ fun TranslationScreen(
     onStartRecognition: () -> Unit = {},
     cameraAnalyzer: ImageAnalysis.Analyzer? = null,
     startRecognitionEnabled: Boolean = false,
+    liteModeEnabled: Boolean = true,
+    onLiteModeToggle: () -> Unit = {},
 ) {
     val context = LocalContext.current
     var useFrontCamera by remember { mutableStateOf(false) }
     var expanded by remember { mutableStateOf(false) }
     var showCard by remember { mutableStateOf(false) }
+    var currentFps by remember { mutableStateOf(0f) }
 
     LaunchedEffect(Unit) {
         delay(3000)
         showCard = true
+    }
+    
+    // Update FPS every 500ms for live display
+    LaunchedEffect(Unit) {
+        while (true) {
+            currentFps = RecognitionDiagnostics.getCurrentFPS()
+            delay(500)
+        }
     }
 
     val translations = mapOf(
@@ -307,12 +450,15 @@ fun TranslationScreen(
                             it.surfaceProvider = previewView.surfaceProvider
                         }
                         val analysis = ImageAnalysis.Builder()
+                            .setTargetResolution(
+                                Size(PerformanceConfig.CAMERA_WIDTH, PerformanceConfig.CAMERA_HEIGHT)
+                            )
                             .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
                             .build()
                             .also { imageAnalysis ->
                                 cameraAnalyzer?.let { analyzer ->
                                     imageAnalysis.setAnalyzer(
-                                        ContextCompat.getMainExecutor(context),
+                                        Executors.newSingleThreadExecutor(),
                                         analyzer
                                     )
                                 }
@@ -331,49 +477,345 @@ fun TranslationScreen(
 
             AndroidView(
                 modifier = Modifier.fillMaxSize(), factory = { previewView })
+            
+            // Hand landmark overlay on top of camera preview
+            val overlayView = remember {
+                HandLandmarkOverlay(context).also {
+                    (context as? TranslationActivity)?.setHandLandmarkOverlay(it)
+                }
+            }
+            
+            AndroidView(
+                modifier = Modifier.fillMaxSize(),
+                factory = { overlayView }
+            )
 
-            if (glossText.isNotBlank() || glossError != null) {
+            // Recognition overlay - ALWAYS VISIBLE (top-left: status + label + FPS)
+            Card(
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .padding(top = 16.dp, start = 16.dp),
+                colors = CardDefaults.cardColors(containerColor = Color(0xE6FFFFFF))
+            ) {
+                Column(modifier = Modifier.padding(12.dp)) {
+                    // Status indicator
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(
+                            modifier = Modifier
+                                .size(8.dp)
+                                .background(
+                                    if (recognitionResult != null) Color(0xFF4CAF50) else Color(0xFFFFA726),
+                                    CircleShape
+                                )
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = if (recognitionResult != null) "Recognizing" else "Waiting for hands...",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = Color.DarkGray,
+                            fontFamily = InterFontFamily
+                        )
+                    }
+                    
+                    Spacer(modifier = Modifier.height(8.dp))
+                    
+                    // Current detection
+                    if (recognitionResult != null) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                text = recognitionResult.glossLabel,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 18.sp,
+                                color = Color.Black,
+                                fontFamily = InterFontFamily
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "${(recognitionResult.glossConf * 100).toInt()}%",
+                                fontSize = 14.sp,
+                                color = if (recognitionResult.glossConf >= 0.65f) Color(0xFF4CAF50) else Color.Gray,
+                                fontFamily = InterFontFamily
+                            )
+                        }
+                        
+                        // Origin badge
+                        if (recognitionResult.originLabel != null) {
+                            Spacer(modifier = Modifier.height(4.dp))
+                            val originDisplay = if (recognitionResult.originConf != null && recognitionResult.originConf < 0.70f) {
+                                "${recognitionResult.originLabel}~"
+                            } else {
+                                recognitionResult.originLabel
+                            }
+                            Text(
+                                text = "Origin: $originDisplay",
+                                fontSize = 12.sp,
+                                color = Color.DarkGray,
+                                fontFamily = InterFontFamily
+                            )
+                        }
+                    } else {
+                        Text(
+                            text = "👋 Show your hand",
+                            fontSize = 14.sp,
+                            color = Color.Gray,
+                            fontFamily = InterFontFamily
+                        )
+                    }
+                    
+                    // FPS - always show with color coding
+                    Spacer(modifier = Modifier.height(4.dp))
+                    val fpsColor = when {
+                        currentFps >= 15f -> Color(0xFF4CAF50)  // Green for >= 15 FPS
+                        currentFps >= 10f -> Color(0xFFFFA726)  // Yellow/Orange for 10-15 FPS
+                        currentFps > 0f -> Color(0xFFFB8C00)    // Darker orange for < 10 FPS
+                        else -> Color.Red                        // Red for 0 FPS
+                    }
+                    Text(
+                        text = "FPS: %.1f".format(currentFps),
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = fpsColor,
+                        fontFamily = InterFontFamily
+                    )
+                    
+                    // DEBUG INFO - MediaPipe counters
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        text = "━━━ DEBUG ━━━",
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFF2196F3),
+                        fontFamily = InterFontFamily
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = "MP Frames: ${com.example.expressora.recognition.mediapipe.HandLandmarkerEngine.framesProcessed.get()}",
+                        fontSize = 10.sp,
+                        color = Color.DarkGray,
+                        fontFamily = InterFontFamily
+                    )
+                    Text(
+                        text = "MP Results: ${com.example.expressora.recognition.mediapipe.HandLandmarkerEngine.resultsReceived.get()}",
+                        fontSize = 10.sp,
+                        color = Color.DarkGray,
+                        fontFamily = InterFontFamily
+                    )
+                    Text(
+                        text = "Hands Found: ${com.example.expressora.recognition.mediapipe.HandLandmarkerEngine.handsDetected.get()}",
+                        fontSize = 10.sp,
+                        color = if (com.example.expressora.recognition.mediapipe.HandLandmarkerEngine.handsDetected.get() > 0) Color(0xFF4CAF50) else Color.Red,
+                        fontFamily = InterFontFamily
+                    )
+                }
+            }
+            
+            // Token accumulator row (top-right side)
+            if (accumulatorState.tokens.isNotEmpty() || accumulatorState.currentWord.isNotEmpty()) {
                 Card(
                     modifier = Modifier
-                        .align(Alignment.TopStart)
-                        .padding(top = 72.dp, start = 16.dp, end = 16.dp),
+                        .align(Alignment.TopEnd)
+                        .padding(top = 16.dp, end = 16.dp),
                     colors = CardDefaults.cardColors(containerColor = Color(0xE6FFFFFF))
                 ) {
                     Column(modifier = Modifier.padding(12.dp)) {
                         Text(
-                            text = glossError ?: glossText,
+                            text = "Sequence (${accumulatorState.tokens.size}/7)",
+                            fontSize = 12.sp,
                             fontWeight = FontWeight.SemiBold,
-                            fontSize = 16.sp,
-                            color = Color.Black,
+                            color = Color.DarkGray,
                             fontFamily = InterFontFamily
                         )
-                        if (glossEvent is GlossEvent.StableChunk) {
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Row(
+                            modifier = Modifier.horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            accumulatorState.tokens.forEach { token ->
+                                AssistChip(
+                                    onClick = {},
+                                    label = {
+                                        Text(
+                                            text = token,
+                                            fontSize = 12.sp,
+                                            fontFamily = InterFontFamily
+                                        )
+                                    },
+                                    colors = AssistChipDefaults.assistChipColors(
+                                        containerColor = Color(0xFFFACC15)
+                                    )
+                                )
+                            }
+                        }
+                        
+                        // Current word being built
+                        if (accumulatorState.currentWord.isNotEmpty()) {
+                            Spacer(modifier = Modifier.height(4.dp))
                             Text(
-                                text = "Confidence ${(glossEvent.confidence * 100).toInt()}%",
+                                text = "Building: [${accumulatorState.currentWord}]",
                                 fontSize = 12.sp,
-                                color = Color.Gray,
+                                fontStyle = androidx.compose.ui.text.font.FontStyle.Italic,
+                                color = Color.DarkGray,
                                 fontFamily = InterFontFamily
                             )
                         }
                     }
                 }
             }
-
-            IconButton(
-                onClick = { useFrontCamera = !useFrontCamera },
-                modifier = Modifier
-                    .align(Alignment.TopCenter)
-                    .padding(16.dp)
-                    .size(48.dp)
-                    .background(Color.Transparent)
-            ) {
-                Icon(
-                    imageVector = Icons.Filled.Camera,
-                    contentDescription = "Switch Camera",
-                    tint = Color(0xFFFACC15)
-                )
+            
+            // Last bus event (top-center, below recognition overlay)
+            if (lastBusEvent != null) {
+                Card(
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        .padding(top = 120.dp, start = 16.dp, end = 16.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color(0xE64CAF50))
+                ) {
+                    Text(
+                        text = "Published: $lastBusEvent",
+                        fontSize = 12.sp,
+                        color = Color.White,
+                        fontFamily = InterFontFamily,
+                        modifier = Modifier.padding(8.dp)
+                    )
+                }
             }
 
+            // Camera controls (top-center)
+            Row(
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .padding(16.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                IconButton(
+                    onClick = { useFrontCamera = !useFrontCamera },
+                    modifier = Modifier
+                        .size(48.dp)
+                        .background(Color(0xE6FFFFFF), CircleShape)
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Camera,
+                        contentDescription = "Switch Camera",
+                        tint = Color(0xFFFACC15)
+                    )
+                }
+                
+                // Lite Mode toggle
+                IconButton(
+                    onClick = onLiteModeToggle,
+                    modifier = Modifier
+                        .size(48.dp)
+                        .background(
+                            if (liteModeEnabled) Color(0xE64CAF50) else Color(0xE6FF9800),
+                            CircleShape
+                        )
+                ) {
+                    Text(
+                        text = if (liteModeEnabled) "L" else "H",
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White,
+                        fontFamily = InterFontFamily
+                    )
+                }
+            }
+
+            // Control buttons (Backspace, Clear, Send) - COMMENTED OUT
+            /*
+            Row(
+                modifier = Modifier
+                    .align(Alignment.BottomStart)
+                    .padding(start = 16.dp, bottom = 160.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                IconButton(
+                    onClick = onBackspace,
+                    modifier = Modifier
+                        .size(48.dp)
+                        .background(Color(0xE6FFFFFF), CircleShape)
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Backspace,
+                        contentDescription = "Backspace",
+                        tint = Color.Black
+                    )
+                }
+                IconButton(
+                    onClick = onClear,
+                    modifier = Modifier
+                        .size(48.dp)
+                        .background(Color(0xE6FFFFFF), CircleShape)
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Clear,
+                        contentDescription = "Clear",
+                        tint = Color.Black
+                    )
+                }
+                IconButton(
+                    onClick = onSend,
+                    modifier = Modifier
+                        .size(48.dp)
+                        .background(Color(0xE6FACC15), CircleShape)
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Send,
+                        contentDescription = "Send",
+                        tint = Color.Black
+                    )
+                }
+            }
+            
+            // Action buttons (Copy, Save, Share) - COMMENTED OUT
+            Row(
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(end = 16.dp, bottom = 160.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                IconButton(
+                    onClick = onCopy,
+                    modifier = Modifier
+                        .size(40.dp)
+                        .background(Color(0xE6FFFFFF), CircleShape)
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.ContentCopy,
+                        contentDescription = "Copy",
+                        tint = Color.Black,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+                IconButton(
+                    onClick = onSave,
+                    modifier = Modifier
+                        .size(40.dp)
+                        .background(Color(0xE6FFFFFF), CircleShape)
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Save,
+                        contentDescription = "Save",
+                        tint = Color.Black,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+                IconButton(
+                    onClick = onShare,
+                    modifier = Modifier
+                        .size(40.dp)
+                        .background(Color(0xE6FFFFFF), CircleShape)
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Share,
+                        contentDescription = "Share",
+                        tint = Color.Black,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+            }
+            */
+            
             AnimatedVisibility(
                 visible = showCard, enter = slideInVertically(
                     initialOffsetY = { it }, animationSpec = tween(600)
@@ -557,6 +999,8 @@ fun TranslationScreen(
                 }
             }
 
+            // Start Recognition button - COMMENTED OUT (auto-starts now)
+            /*
             Button(
                 onClick = onStartRecognition,
                 enabled = startRecognitionEnabled,
@@ -566,7 +1010,10 @@ fun TranslationScreen(
             ) {
                 Text("Start Recognition", fontFamily = InterFontFamily)
             }
+            */
 
+            // Dev Predict button - COMMENTED OUT (testing/debug button)
+            /*
             Button(
                 onClick = onDevPredict,
                 modifier = Modifier
@@ -575,6 +1022,7 @@ fun TranslationScreen(
             ) {
                 Text("Dev Predict", fontFamily = InterFontFamily)
             }
+            */
         }
     }
 }
@@ -584,7 +1032,16 @@ fun TranslationScreen(
 fun TranslationScreenPreview() {
     TranslationScreen(
         glossEvent = GlossEvent.Idle,
+        recognitionResult = null,
+        accumulatorState = com.example.expressora.recognition.accumulator.AccumulatorState(),
+        lastBusEvent = null,
         onDevPredict = {},
+        onBackspace = {},
+        onClear = {},
+        onSend = {},
+        onCopy = {},
+        onSave = {},
+        onShare = {},
         ttsReady = false,
         selectedLanguage = "English",
         onLanguageChanged = {},
