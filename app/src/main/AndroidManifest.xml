@@ -56,7 +56,8 @@
             android:exported="false" />
         <activity
             android:name=".dashboard.user.translation.TranslationActivity"
-            android:exported="false" />
+            android:exported="false"
+            android:hardwareAccelerated="true" />
         <activity
             android:name=".dashboard.user.tutorial.TutorialActivity"
             android:exported="false" />
