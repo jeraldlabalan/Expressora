@@ -84,15 +84,23 @@ import com.example.expressora.recognition.view.HandLandmarkOverlay
 import com.example.expressora.ui.theme.InterFontFamily
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.asSharedFlow
 import java.util.Locale
 import android.util.Size
 import java.util.concurrent.Executors
+import java.util.concurrent.ThreadFactory
+import java.util.concurrent.atomic.AtomicInteger
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context as AndroidContext
 import android.widget.Toast
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.filled.Backspace
 import androidx.compose.material.icons.filled.Clear
@@ -119,11 +127,31 @@ class TranslationActivity : ComponentActivity(), TextToSpeech.OnInitListener {
     private var recognitionEnabled = false
     private var handEngineReady = false
     private var assetsReady = false
+    private var cameraPermissionGranted = false
     @Volatile
     private var handLandmarkOverlay: HandLandmarkOverlay? = null
+    @Volatile
+    private var handEngineInitializing = false
+    private val _handEngineInitializationState = MutableSharedFlow<Boolean>(replay = 1)
+    val handEngineInitializationState = _handEngineInitializationState.asSharedFlow()
 
     private val requestPermissionLauncher =
-        registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { isGranted ->
+            cameraPermissionGranted = isGranted
+            if (isGranted) {
+                // Trigger recomposition to start camera binding
+                lifecycleScope.launch { _cameraPermissionState.emit(true) }
+            } else {
+                Toast.makeText(
+                    this,
+                    "Camera permission is required for recognition.",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+        }
+
+    private val _cameraPermissionState = kotlinx.coroutines.flow.MutableSharedFlow<Boolean>(replay = 1)
+    private val cameraPermissionFlow = _cameraPermissionState.asSharedFlow()
     
     // Function to set overlay from Compose
     internal fun setHandLandmarkOverlay(overlay: HandLandmarkOverlay) {
@@ -143,59 +171,86 @@ class TranslationActivity : ComponentActivity(), TextToSpeech.OnInitListener {
         handEngineReady = false
         assetsReady = RecognitionProvider.ensureAssets(this)
 
+        cameraPermissionGranted = ContextCompat.checkSelfPermission(
+            this, Manifest.permission.CAMERA
+        ) == PackageManager.PERMISSION_GRANTED
+
+        if (cameraPermissionGranted) {
+            lifecycleScope.launch { _cameraPermissionState.emit(true) }
+        }
+
         if (assetsReady) {
             // Log diagnostics once
             RecognitionProvider.logDiagnostics(this)
             
-            runCatching {
-                handEngine = HandLandmarkerEngine(this).apply {
-                    onResult = { result ->
-                        // Update overlay with landmarks for visualization
-                        handLandmarkOverlay?.setHandLandmarks(result, 640, 480)
-                        
-                        // Continue with recognition
-                        val hands = HandToFeaturesBridge.extract(result)
-                        if (hands.left != null || hands.right != null) {
-                            val handCount = listOfNotNull(hands.left, hands.right).size
-                            Log.d(HAND_TAG, "Detected $handCount hand(s)")
+            // Initialize HandLandmarkerEngine on background thread
+            handEngineInitializing = true
+            lifecycleScope.launch(Dispatchers.IO) {
+                try {
+                    Log.i(TAG, "Initializing HandLandmarkerEngine on background thread...")
+                    val initializedEngine = HandLandmarkerEngine(this@TranslationActivity).apply {
+                        onResult = { result ->
+                            // Update overlay with landmarks for visualization (must run on UI thread)
+                            handLandmarkOverlay?.let { overlay ->
+                                overlay.post { overlay.setHandLandmarks(result, 640, 480) }
+                            }
+
+                            // Continue with recognition
+                            val hands = HandToFeaturesBridge.extract(result)
+                            if (hands.left != null || hands.right != null) {
+                                Log.d(HAND_TAG, "Detected ${listOfNotNull(hands.left, hands.right).size} hand(s)")
+                            }
+                            val vector = HandToFeaturesBridge.toVec(hands, RecognitionProvider.TWO_HANDS)
+                            recognitionViewModel.onFeatures(vector)
                         }
-                        val vector = HandToFeaturesBridge.toVec(hands, RecognitionProvider.TWO_HANDS)
-                        recognitionViewModel.onFeatures(vector)
+                        onError = { error -> Log.e(HAND_TAG, "Error running hand landmarker", error) }
                     }
-                    onError = { error -> Log.e(HAND_TAG, "Error running hand landmarker", error) }
+                    
+                    // Switch to main thread to update UI state
+                    withContext(Dispatchers.Main) {
+                        handEngine = initializedEngine
+                        handEngineReady = true
+                        recognitionEnabled = true  // Auto-start recognition when ready
+                        handEngineInitializing = false
+                        _handEngineInitializationState.emit(true)
+                        Log.i(TAG, "HandLandmarkerEngine initialized successfully on background thread")
+                        
+                        val handDelegate = "${handEngine.getDelegateType().name}/${handEngine.getRunningMode().name}"
+
+                        // Log startup configuration (once, after initialization)
+                        launch {
+                            // Give classifier time to initialize on first inference
+                            delay(1000)
+                            val classifierDelegate = recognitionViewModel.getClassifierDelegate()
+                            val classifierModel = recognitionViewModel.getClassifierModelVariant()
+                            // MediaPipe Hands typically uses GPU for inference
+                            RecognitionDiagnostics.logStartupConfig(
+                                context = this@TranslationActivity,
+                                handsDelegate = handDelegate,
+                                classifierDelegate = classifierDelegate,
+                                classifierModel = classifierModel,
+                                faceDelegate = "CPU"
+                            )
+                        }
+                    }
+                } catch (error: Throwable) {
+                    withContext(Dispatchers.Main) {
+                        Log.e(TAG, "Failed to initialize HandLandmarkerEngine", error)
+                        handEngineReady = false
+                        handEngineInitializing = false
+                        _handEngineInitializationState.emit(false)
+                        assetsReady = false
+                    }
                 }
-                handEngineReady = true
-                recognitionEnabled = true  // Auto-start recognition when ready
-                Log.i(TAG, "Recognition auto-started successfully")
-                
-                // Log startup configuration (once, after initialization)
-                lifecycleScope.launch {
-                    // Give classifier time to initialize on first inference
-                    delay(1000)
-                    val classifierDelegate = recognitionViewModel.getClassifierDelegate()
-                    val classifierModel = recognitionViewModel.getClassifierModelVariant()
-                    // MediaPipe Hands typically uses GPU for inference
-                    RecognitionDiagnostics.logStartupConfig(
-                        context = this@TranslationActivity,
-                        handsDelegate = "GPU",  // MediaPipe Hands uses GPU
-                        classifierDelegate = classifierDelegate,
-                        classifierModel = classifierModel,
-                        faceDelegate = "CPU"
-                    )
-                }
-            }.onFailure { error ->
-                Log.e(TAG, "Failed to initialize HandLandmarkerEngine", error)
-                handEngineReady = false
-                assetsReady = false
             }
         } else {
             Log.w(TAG, "Recognition assets missing; Start Recognition disabled.")
+            lifecycleScope.launch {
+                _handEngineInitializationState.emit(false)
+            }
         }
 
-        if (ContextCompat.checkSelfPermission(
-                this, Manifest.permission.CAMERA
-            ) != PackageManager.PERMISSION_GRANTED
-        ) {
+        if (!cameraPermissionGranted) {
             requestPermissionLauncher.launch(Manifest.permission.CAMERA)
         }
 
@@ -205,17 +260,35 @@ class TranslationActivity : ComponentActivity(), TextToSpeech.OnInitListener {
             val recognitionResult by recognitionViewModel.recognitionResult.collectAsState()
             val accumulatorState by recognitionViewModel.accumulatorState.collectAsState()
             val lastBusEvent by recognitionViewModel.lastBusEvent.collectAsState()
+            var hasCameraPermission by remember { mutableStateOf(cameraPermissionGranted) }
+
+            LaunchedEffect(Unit) {
+                cameraPermissionFlow.collectLatest { granted ->
+                    hasCameraPermission = granted
+                }
+            }
             
             var recognitionStarted by remember { mutableStateOf(recognitionEnabled) }
             val canStartRecognition = assetsReady && handEngineReady
             
+            // Track hand engine initialization state
+            var handEngineInitialized by remember { mutableStateOf(handEngineReady) }
+            var isInitializing by remember { mutableStateOf(handEngineInitializing) }
+            
+            LaunchedEffect(Unit) {
+                handEngineInitializationState.collectLatest { initialized ->
+                    handEngineInitialized = initialized
+                    isInitializing = false
+                }
+            }
+            
             // Lite Mode toggle state
             var liteModeEnabled by remember { mutableStateOf(PerformanceConfig.LITE_MODE_ENABLED) }
-            val analyzer = remember {
+            val analyzer = remember(hasCameraPermission) {
                 CameraBitmapAnalyzer(
                     onBitmap = { bitmap ->
                         try {
-                            if (recognitionEnabled && assetsReady && handEngineReady) {
+                            if (recognitionEnabled && assetsReady && handEngineReady && hasCameraPermission) {
                                 handEngine.detectAsync(bitmap)
                             }
                         } catch (error: Throwable) {
@@ -232,6 +305,7 @@ class TranslationActivity : ComponentActivity(), TextToSpeech.OnInitListener {
                 recognitionResult = recognitionResult,
                 accumulatorState = accumulatorState,
                 lastBusEvent = lastBusEvent,
+                cameraPermissionGranted = hasCameraPermission,
                 onDevPredict = {
                     recognitionViewModel.onFeatures(RecognitionProvider.zeroFeatureVector())
                 },
@@ -293,20 +367,50 @@ class TranslationActivity : ComponentActivity(), TextToSpeech.OnInitListener {
                         if (liteModeEnabled) "Lite Mode: ON (15-30 FPS target)" else "Lite Mode: OFF",
                         Toast.LENGTH_SHORT
                     ).show()
-                }
+                },
+                isInitializing = isInitializing,
+                handEngineInitialized = handEngineInitialized
             )
         }
     }
 
     override fun onDestroy() {
         super.onDestroy()
-        if (handEngineReady) {
-            handEngine.close()
-            handEngineReady = false
+        
+        // Cleanup recognition engine
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                recognitionViewModel.stop()
+            } catch (e: Exception) {
+                Log.e(TAG, "Error stopping recognition engine", e)
+            }
         }
+        
+        // Cleanup hand landmarker engine
+        if (handEngineReady) {
+            try {
+                handEngine.close()
+                handEngineReady = false
+            } catch (e: Exception) {
+                Log.e(TAG, "Error closing hand engine", e)
+            }
+        }
+        
+        // Cleanup TTS
+        try {
+            tts?.stop()
+            tts?.shutdown()
+            tts = null
+        } catch (e: Exception) {
+            Log.e(TAG, "Error shutting down TTS", e)
+        }
+        
         recognitionEnabled = false
-        tts?.stop()
-        tts?.shutdown()
+        
+        // Clear overlay reference
+        handLandmarkOverlay = null
+        
+        Log.d(TAG, "TranslationActivity destroyed, resources cleaned up")
     }
 
     override fun onInit(status: Int) {
@@ -323,6 +427,20 @@ class TranslationActivity : ComponentActivity(), TextToSpeech.OnInitListener {
     companion object {
         private const val TAG = "TranslationActivity"
         private const val HAND_TAG = "HandLandmarker"
+        
+        // Optimized executor for ImageAnalysis - uses fixed thread pool for better performance
+        internal val imageAnalysisExecutor = Executors.newFixedThreadPool(
+            2,
+            object : ThreadFactory {
+                private val threadNumber = AtomicInteger(1)
+                override fun newThread(r: Runnable): Thread {
+                    val thread = Thread(r, "ImageAnalysis-${threadNumber.getAndIncrement()}")
+                    thread.priority = Thread.NORM_PRIORITY - 1 // Slightly lower priority
+                    thread.isDaemon = true
+                    return thread
+                }
+            }
+        )
     }
 }
 
@@ -353,6 +471,7 @@ fun TranslationScreen(
     recognitionResult: com.example.expressora.recognition.model.RecognitionResult? = null,
     accumulatorState: com.example.expressora.recognition.accumulator.AccumulatorState = com.example.expressora.recognition.accumulator.AccumulatorState(),
     lastBusEvent: String? = null,
+    cameraPermissionGranted: Boolean = false,
     onDevPredict: () -> Unit,
     onBackspace: () -> Unit = {},
     onClear: () -> Unit = {},
@@ -369,6 +488,8 @@ fun TranslationScreen(
     startRecognitionEnabled: Boolean = false,
     liteModeEnabled: Boolean = true,
     onLiteModeToggle: () -> Unit = {},
+    isInitializing: Boolean = false,
+    handEngineInitialized: Boolean = false,
 ) {
     val context = LocalContext.current
     var useFrontCamera by remember { mutableStateOf(false) }
@@ -441,7 +562,8 @@ fun TranslationScreen(
             val lifecycleOwner = context as ComponentActivity
             val previewView = remember { PreviewView(context) }
 
-            LaunchedEffect(useFrontCamera) {
+            LaunchedEffect(useFrontCamera, cameraPermissionGranted) {
+                if (!cameraPermissionGranted) return@LaunchedEffect
                 val cameraProviderFuture = ProcessCameraProvider.getInstance(context)
                 cameraProviderFuture.addListener({
                     val cameraProvider = cameraProviderFuture.get()
@@ -457,8 +579,10 @@ fun TranslationScreen(
                             .build()
                             .also { imageAnalysis ->
                                 cameraAnalyzer?.let { analyzer ->
+                                    // Use optimized executor for background frame processing
+                                    // Access executor via companion object since it's now internal
                                     imageAnalysis.setAnalyzer(
-                                        Executors.newSingleThreadExecutor(),
+                                        TranslationActivity.imageAnalysisExecutor,
                                         analyzer
                                     )
                                 }
@@ -475,20 +599,37 @@ fun TranslationScreen(
                 }, ContextCompat.getMainExecutor(context))
             }
 
-            AndroidView(
-                modifier = Modifier.fillMaxSize(), factory = { previewView })
+            // Camera preview with 4:3 aspect ratio, centered
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .aspectRatio(4f / 3f)
+                    .align(Alignment.Center)
+            ) {
+                AndroidView(
+                    modifier = Modifier.fillMaxSize(),
+                    factory = { previewView }
+                )
+            }
             
-            // Hand landmark overlay on top of camera preview
+            // Hand landmark overlay on top of camera preview (matching 4:3 aspect ratio)
             val overlayView = remember {
                 HandLandmarkOverlay(context).also {
                     (context as? TranslationActivity)?.setHandLandmarkOverlay(it)
                 }
             }
             
-            AndroidView(
-                modifier = Modifier.fillMaxSize(),
-                factory = { overlayView }
-            )
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .aspectRatio(4f / 3f)
+                    .align(Alignment.Center)
+            ) {
+                AndroidView(
+                    modifier = Modifier.fillMaxSize(),
+                    factory = { overlayView }
+                )
+            }
 
             // Recognition overlay - ALWAYS VISIBLE (top-left: status + label + FPS)
             Card(
@@ -510,7 +651,12 @@ fun TranslationScreen(
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            text = if (recognitionResult != null) "Recognizing" else "Waiting for hands...",
+                            text = when {
+                                isInitializing -> "Initializing models..."
+                                !handEngineInitialized -> "Loading engine..."
+                                recognitionResult != null -> "Recognizing"
+                                else -> "Waiting for hands..."
+                            },
                             fontSize = 12.sp,
                             fontWeight = FontWeight.SemiBold,
                             color = Color.DarkGray,
@@ -602,11 +748,76 @@ fun TranslationScreen(
                         fontFamily = InterFontFamily
                     )
                     Text(
-                        text = "Hands Found: ${com.example.expressora.recognition.mediapipe.HandLandmarkerEngine.handsDetected.get()}",
+                        text = "Hands Found: ${com.example.expressora.recognition.mediapipe.HandLandmarkerEngine.handsDetected.get()}", 
                         fontSize = 10.sp,
                         color = if (com.example.expressora.recognition.mediapipe.HandLandmarkerEngine.handsDetected.get() > 0) Color(0xFF4CAF50) else Color.Red,
                         fontFamily = InterFontFamily
                     )
+                    
+                    // DEBUG INFO - Model outputs
+                    if (recognitionResult?.debugInfo != null) {
+                        val debug = recognitionResult.debugInfo
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = "━━━ MODEL DEBUG ━━━",
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFF9C27B0),
+                            fontFamily = InterFontFamily
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        
+                        // Feature vector stats
+                        val fvStats = debug.featureVectorStats
+                        Text(
+                            text = "Features: ${fvStats.nonZeroCount}/${fvStats.size} non-zero",
+                            fontSize = 9.sp,
+                            color = if (fvStats.isAllZeros) Color.Red else Color.DarkGray,
+                            fontFamily = InterFontFamily
+                        )
+                        Text(
+                            text = "Range: [${"%.3f".format(fvStats.min)}, ${"%.3f".format(fvStats.max)}]",
+                            fontSize = 9.sp,
+                            color = Color.DarkGray,
+                            fontFamily = InterFontFamily
+                        )
+                        
+                        // Top 3 raw logits
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "Top 3 Raw Logits:",
+                            fontSize = 9.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = Color(0xFF9C27B0),
+                            fontFamily = InterFontFamily
+                        )
+                        debug.rawLogits.take(3).forEach { pred ->
+                            Text(
+                                text = "  ${pred.label}: ${"%.2f".format(pred.value)}",
+                                fontSize = 8.sp,
+                                color = Color.DarkGray,
+                                fontFamily = InterFontFamily
+                            )
+                        }
+                        
+                        // Top 3 softmax probabilities
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "Top 3 Probs:",
+                            fontSize = 9.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = Color(0xFF9C27B0),
+                            fontFamily = InterFontFamily
+                        )
+                        debug.softmaxProbs.take(3).forEach { pred ->
+                            Text(
+                                text = "  ${pred.label}: ${(pred.value * 100).toInt()}%",
+                                fontSize = 8.sp,
+                                color = if (pred.value >= 0.65f) Color(0xFF4CAF50) else Color.DarkGray,
+                                fontFamily = InterFontFamily
+                            )
+                        }
+                    }
                 }
             }
             
@@ -1047,6 +1258,8 @@ fun TranslationScreenPreview() {
         onLanguageChanged = {},
         speakText = {},
         onStartRecognition = {},
-        startRecognitionEnabled = false
+        startRecognitionEnabled = false,
+        isInitializing = false,
+        handEngineInitialized = false
     )
 }

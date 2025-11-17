@@ -17,8 +17,8 @@ class SequenceAccumulator(
     private val scope: CoroutineScope,
     private val maxTokens: Int = 7,
     private val confidenceThreshold: Float = RecognitionProvider.GLOSS_CONFIDENCE_THRESHOLD,
-    private val holdFrames: Int = 3,
-    private val dedupWindowMs: Long = 1000L,
+    private val holdFrames: Int = 1,  // Reduced from 3 to 1 for more responsive detection
+    private val dedupWindowMs: Long = 300L,  // Reduced from 1000ms to 300ms
     private val alphabetIdleMs: Long = 1000L
 ) {
     private val TAG = "SequenceAccumulator"
@@ -51,8 +51,11 @@ class SequenceAccumulator(
         val label = result.glossLabel
         val conf = result.glossConf
         
+        Log.v(TAG, "onRecognitionResult: label='$label', conf=$conf, threshold=$confidenceThreshold")
+        
         // Check confidence threshold
         if (conf < confidenceThreshold) {
+            Log.v(TAG, "Confidence below threshold ($conf < $confidenceThreshold), resetting frame count")
             resetFrameCount()
             return
         }
@@ -61,14 +64,17 @@ class SequenceAccumulator(
         if (label == currentLabel) {
             frameCount++
             currentConf = conf
+            Log.v(TAG, "Same label '$label', frameCount=$frameCount (need $holdFrames)")
             
             // Check if we've held long enough
             if (frameCount >= holdFrames) {
+                Log.d(TAG, "Label '$label' held for $frameCount frames, attempting to accept token")
                 tryAcceptToken(label, conf)
                 resetFrameCount()
             }
         } else {
             // New label, reset count
+            Log.d(TAG, "Label changed: '${currentLabel}' -> '$label', resetting frame count")
             currentLabel = label
             currentConf = conf
             frameCount = 1
@@ -84,19 +90,25 @@ class SequenceAccumulator(
     private fun tryAcceptToken(label: String, conf: Float) {
         val now = System.currentTimeMillis()
         
-        // De-duplication check
-        if (label == lastAcceptedLabel && (now - lastAcceptedTime) < dedupWindowMs) {
-            Log.d(TAG, "Skipping duplicate token: $label")
+        Log.d(TAG, "tryAcceptToken: label='$label', conf=$conf, lastAccepted='$lastAcceptedLabel', " +
+                "timeSince=${now - lastAcceptedTime}ms, dedupWindow=$dedupWindowMs")
+        
+        // De-duplication check (but allow if confidence is very high)
+        if (label == lastAcceptedLabel && (now - lastAcceptedTime) < dedupWindowMs && conf < 0.85f) {
+            Log.d(TAG, "Skipping duplicate token: $label (conf=${conf}, timeSince=${now - lastAcceptedTime}ms)")
             return
         }
         
         // Check if alphabet letter
         val isLetter = LabelMap.isAlphabetLetter(label)
+        Log.d(TAG, "Token type: isLetter=$isLetter")
         
         if (isLetter) {
+            Log.d(TAG, "Handling alphabet letter: '$label'")
             handleAlphabetLetter(label, now)
         } else {
             // Non-letter: commit any pending word first, then add token
+            Log.d(TAG, "Handling non-letter token: '$label', committing any pending word first")
             commitAlphabetWord()
             addToken(label, now)
         }
