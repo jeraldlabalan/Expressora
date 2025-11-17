@@ -488,18 +488,41 @@ class TfLiteInterpreter(
             buffer.limit(expectedSize)
         }
         
-        // DEBUG: Log first 20 bytes of buffer to verify they change (only in debug builds)
+        // DEBUG: Log bytes from right hand portion to verify they change (only in debug builds)
+        // For two-hand vectors, left hand (first 63 values) may be zeros, so we check
+        // the right hand portion where data actually changes.
         val position = buffer.position()
         buffer.rewind()
-        val firstBytes = ByteArray(minOf(20, buffer.remaining()))
-        buffer.get(firstBytes)
+        
+        // Calculate right hand start byte offset
+        val rightHandStartByte = if (isInputQuantized) {
+            63 // Right hand starts at feature index 63
+        } else {
+            252 // 4 bytes per float * 63 features = 252 bytes
+        }
+        
+        // Read bytes from right hand portion (where data actually changes)
+        val bytesToCheck = minOf(20, buffer.remaining() - rightHandStartByte)
+        val rightHandBytes = if (bytesToCheck > 0 && buffer.remaining() > rightHandStartByte) {
+            buffer.position(rightHandStartByte)
+            val bytes = ByteArray(bytesToCheck)
+            buffer.get(bytes)
+            bytes
+        } else {
+            // Fallback: read first 20 bytes if buffer is too small
+            buffer.rewind()
+            ByteArray(minOf(20, buffer.remaining())).also { buffer.get(it) }
+        }
+        
         buffer.position(position)
         LogUtils.debugIfVerbose(TAG) { "📦 Input buffer: size=${buffer.capacity()}, position=${buffer.position()}, " +
-                "limit=${buffer.limit()}, first20bytes=[${firstBytes.joinToString { "%02x".format(it) }}]" }
+                "limit=${buffer.limit()}, rightHandBytes[${rightHandStartByte}-${rightHandStartByte + rightHandBytes.size - 1}]=[" +
+                "${rightHandBytes.joinToString { "%02x".format(it) }}]" }
         
         // CRITICAL: Frame-by-frame comparison to detect unchanged buffers (always log errors)
-        if (previousBufferBytes != null && previousBufferBytes!!.size == firstBytes.size) {
-            val isIdentical = firstBytes.contentEquals(previousBufferBytes!!)
+        // Compare right hand portion bytes where data actually changes
+        if (previousBufferBytes != null && previousBufferBytes!!.size == rightHandBytes.size) {
+            val isIdentical = rightHandBytes.contentEquals(previousBufferBytes!!)
             if (isIdentical) {
                 consecutiveIdenticalBuffers++
                 Log.e(TAG, "❌ CRITICAL: ByteBuffer IDENTICAL to previous frame! " +
@@ -514,13 +537,84 @@ class TfLiteInterpreter(
         } else {
             consecutiveIdenticalBuffers = 0
         }
-        previousBufferBytes = firstBytes.copyOf()
+        previousBufferBytes = rightHandBytes.copyOf()
+        
+        // CRITICAL: Verify ByteBuffer contains correct feature vector data
+        // Read back from ByteBuffer and compare with input feature vector
+        val verifyPosition = buffer.position()
+        buffer.rewind()
+        
+        try {
+            if (isInputQuantized) {
+                // For quantized: read back quantized bytes and dequantize
+                val rightHandStartIdx = 63
+                val verifyIndices = listOf(63, 64, 65, 66, 67) // First 5 right hand features
+                var mismatchCount = 0
+                
+                for (idx in verifyIndices) {
+                    if (idx < featureDim) {
+                        buffer.position(idx)
+                        val quantizedByte = buffer.get()
+                        val expectedQuantized = quantizeFloat(features[idx])
+                        if (quantizedByte != expectedQuantized) {
+                            mismatchCount++
+                            if (mismatchCount <= 3) { // Log first 3 mismatches
+                                Log.e(TAG, "❌ ByteBuffer verification FAILED at index $idx: " +
+                                        "expected quantized=$expectedQuantized, got=$quantizedByte, " +
+                                        "original float=${features[idx]}")
+                            }
+                        }
+                    }
+                }
+                
+                if (mismatchCount == 0) {
+                    LogUtils.debugIfVerbose(TAG) { "✅ ByteBuffer verification PASSED: right hand portion matches input" }
+                } else {
+                    Log.e(TAG, "❌ CRITICAL: ByteBuffer verification FAILED: $mismatchCount/${verifyIndices.size} values mismatch! " +
+                            "ByteBuffer may not contain correct feature vector data!")
+                }
+            } else {
+                // For float: read back floats directly
+                val rightHandStartIdx = 63
+                val verifyIndices = listOf(63, 64, 65, 66, 67) // First 5 right hand features
+                var mismatchCount = 0
+                val tolerance = 0.0001f
+                
+                for (idx in verifyIndices) {
+                    if (idx < featureDim) {
+                        buffer.position(idx * 4) // 4 bytes per float
+                        val bufferFloat = buffer.getFloat()
+                        val expectedFloat = features[idx]
+                        val diff = kotlin.math.abs(bufferFloat - expectedFloat)
+                        
+                        if (diff > tolerance) {
+                            mismatchCount++
+                            if (mismatchCount <= 3) { // Log first 3 mismatches
+                                Log.e(TAG, "❌ ByteBuffer verification FAILED at index $idx: " +
+                                        "expected=$expectedFloat, got=$bufferFloat, diff=$diff")
+                            }
+                        }
+                    }
+                }
+                
+                if (mismatchCount == 0) {
+                    LogUtils.debugIfVerbose(TAG) { "✅ ByteBuffer verification PASSED: right hand portion matches input" }
+                } else {
+                    Log.e(TAG, "❌ CRITICAL: ByteBuffer verification FAILED: $mismatchCount/${verifyIndices.size} values mismatch! " +
+                            "ByteBuffer may not contain correct feature vector data!")
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ Error during ByteBuffer verification: ${e.message}", e)
+        } finally {
+            buffer.position(verifyPosition)
+        }
         
         // DEBUG: Calculate input hash to verify it changes (only in debug builds)
         val inputHash = calculateBufferHash(buffer)
         if (inputHash != lastInputHash) {
             LogUtils.debugIfVerbose(TAG) { "✅ Input buffer changed: hash=$inputHash (was=$lastInputHash), " +
-                    "first3features=[${features.take(3).joinToString()}]" }
+                    "rightHandFeatures[63-67]=[${features.slice(63..67).joinToString()}]" }
             lastInputHash = inputHash
         } else {
             Log.e(TAG, "❌ CRITICAL: Input buffer UNCHANGED: hash=$inputHash (same as last frame!) " +
@@ -532,15 +626,42 @@ class TfLiteInterpreter(
     
     /**
      * Calculate a simple hash of buffer contents for change detection
+     * For two-hand vectors, left hand (first 63 values) may be zeros, so we check
+     * the right hand portion where data actually changes.
      */
     private fun calculateBufferHash(buffer: ByteBuffer): Int {
         val position = buffer.position()
-            buffer.rewind()
+        buffer.rewind()
+        
         var hash = 0
-        val bytesToCheck = minOf(20, buffer.remaining()) // Check first 20 bytes
-        repeat(bytesToCheck) {
-            hash = 31 * hash + (buffer.get().toInt() and 0xFF)
+        
+        // For two-hand vectors (126 features), right hand starts at:
+        // - Quantized: byte 63 (feature index 63)
+        // - Float: byte 252 (4 bytes * 63 features)
+        val rightHandStartByte = if (isInputQuantized) {
+            63 // Right hand starts at feature index 63
+        } else {
+            252 // 4 bytes per float * 63 features = 252 bytes
         }
+        
+        // Check bytes from right hand portion (where data actually changes)
+        val bytesToCheck = minOf(20, buffer.remaining() - rightHandStartByte)
+        
+        if (bytesToCheck > 0 && buffer.remaining() > rightHandStartByte) {
+            // Skip to right hand portion
+            buffer.position(rightHandStartByte)
+            repeat(bytesToCheck) {
+                hash = 31 * hash + (buffer.get().toInt() and 0xFF)
+            }
+        } else {
+            // Fallback: check first 20 bytes if buffer is too small
+            buffer.rewind()
+            val fallbackBytes = minOf(20, buffer.remaining())
+            repeat(fallbackBytes) {
+                hash = 31 * hash + (buffer.get().toInt() and 0xFF)
+            }
+        }
+        
         buffer.position(position)
         return hash
     }
@@ -686,17 +807,71 @@ class TfLiteInterpreter(
             Log.e(TAG, "❌ Error validating input tensor: ${e.message}", e)
         }
         
-        // CRITICAL: Try to write directly to input tensor buffer first
+        // CRITICAL: Create ByteBuffer with fresh data FIRST
+        // This ensures we have a properly formatted buffer with current frame's data
+        // IMPORTANT: createInputBuffer() always creates a NEW buffer, never reuses old ones
+        val inputBuffer = createInputBuffer(features)
+        
+        // CRITICAL: Calculate expected size first (used in multiple places)
+        val expectedSize = if (isInputQuantized) featureDim else (4 * featureDim)
+        
+        // CRITICAL: Try to write directly to input tensor buffer as well
         // This ensures the data is actually in the tensor before inference
+        // If this fails, we'll rely on the ByteBuffer being passed to interpreter.run()
         val tensorBufferWritten = writeToInputTensor(features)
         
-        // Also create ByteBuffer with same data for API compatibility
-        // CRITICAL: Ensure ByteBuffer is properly formatted and positioned
-        val inputBuffer = createInputBuffer(features)
+        // CRITICAL: If tensor buffer write failed, try to explicitly copy ByteBuffer to input tensor
+        // This ensures the interpreter uses the fresh data from ByteBuffer
+        if (!tensorBufferWritten) {
+            Log.d(TAG, "⚠️ Tensor buffer write failed, attempting to copy ByteBuffer to input tensor")
+            
+            try {
+                val inputTensor = interpreter.getInputTensor(0)
+                // Try to get tensor buffer to copy ByteBuffer into it
+                val tensorBuffer = try {
+                    inputTensor.javaClass.getMethod("asReadWriteBuffer").invoke(inputTensor) as? ByteBuffer
+                } catch (e: Exception) {
+                    try {
+                        inputTensor.javaClass.getMethod("buffer").invoke(inputTensor) as? ByteBuffer
+                    } catch (e2: Exception) {
+                        null
+                    }
+                }
+                
+                if (tensorBuffer != null) {
+                    // Copy ByteBuffer content to tensor buffer
+                    val savedPosition = inputBuffer.position()
+                    val savedLimit = inputBuffer.limit()
+                    inputBuffer.rewind()
+                    inputBuffer.limit(expectedSize)
+                    
+                    val tensorPosition = tensorBuffer.position()
+                    tensorBuffer.rewind()
+                    tensorBuffer.put(inputBuffer)
+                    tensorBuffer.position(tensorPosition)
+                    
+                    inputBuffer.position(savedPosition)
+                    inputBuffer.limit(savedLimit)
+                    
+                    Log.d(TAG, "✅ Successfully copied ByteBuffer to input tensor buffer")
+                } else {
+                    Log.w(TAG, "⚠️ Could not access tensor buffer, will rely on interpreter.run() using ByteBuffer")
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "⚠️ Error copying ByteBuffer to tensor: ${e.message}, will rely on interpreter.run()")
+            }
+            
+            // Ensure ByteBuffer is at position 0 and ready for interpreter.run()
+            inputBuffer.rewind()
+            inputBuffer.limit(expectedSize)
+            
+            // Log that we're using ByteBuffer approach
+            Log.d(TAG, "✅ Using ByteBuffer for inference: position=${inputBuffer.position()}, " +
+                    "limit=${inputBuffer.limit()}, remaining=${inputBuffer.remaining()}")
+        }
         
         // CRITICAL: Reset ByteBuffer position and limit to ensure interpreter reads from start
         inputBuffer.rewind()
-        val expectedSize = if (isInputQuantized) featureDim else (4 * featureDim)
         inputBuffer.limit(expectedSize)
         
         // Verify ByteBuffer state before inference
@@ -709,24 +884,40 @@ class TfLiteInterpreter(
             inputBuffer.limit(inputBuffer.position() + expectedSize)
         }
         
-        // CRITICAL: Verify ByteBuffer contains expected data (only in debug builds)
+        // CRITICAL: Verify ByteBuffer contains expected data from right hand portion (only in debug builds)
+        // Check right hand portion where data actually changes
         val verifyPosition = inputBuffer.position()
+        val rightHandStartByte = if (isInputQuantized) {
+            63 // Right hand starts at feature index 63
+        } else {
+            252 // 4 bytes per float * 63 features = 252 bytes
+        }
+        
         inputBuffer.rewind()
         if (isInputQuantized) {
-            val verifyBytes = ByteArray(minOf(10, expectedSize))
-            inputBuffer.get(verifyBytes)
-            val nonZeroVerify = verifyBytes.count { it != 0.toByte() }
-            LogUtils.debugIfVerbose(TAG) { "ByteBuffer verification: first10bytes=[${verifyBytes.joinToString(separator = ", ", transform = { "%02x".format(it) })}], " +
-                    "nonZero=$nonZeroVerify/${verifyBytes.size}" }
-            if (nonZeroVerify == 0) {
-                Log.e(TAG, "❌ CRITICAL: ByteBuffer first 10 bytes are ALL ZERO! Input data may not be written correctly!")
+            // Check right hand portion bytes
+            if (inputBuffer.remaining() > rightHandStartByte) {
+                inputBuffer.position(rightHandStartByte)
+                val verifyBytes = ByteArray(minOf(10, inputBuffer.remaining()))
+                inputBuffer.get(verifyBytes)
+                val nonZeroVerify = verifyBytes.count { it != 0.toByte() }
+                LogUtils.debugIfVerbose(TAG) { "ByteBuffer verification (right hand): bytes[${rightHandStartByte}-${rightHandStartByte + verifyBytes.size - 1}]=[" +
+                        "${verifyBytes.joinToString(separator = ", ", transform = { "%02x".format(it) })}], " +
+                        "nonZero=$nonZeroVerify/${verifyBytes.size}" }
+                if (nonZeroVerify == 0) {
+                    Log.e(TAG, "❌ CRITICAL: ByteBuffer right hand portion bytes are ALL ZERO! Input data may not be written correctly!")
+                }
             }
         } else {
-            val verifyValues = FloatArray(minOf(3, featureDim))
-            for (idx in verifyValues.indices) {
-                verifyValues[idx] = inputBuffer.getFloat()
+            // Check right hand portion floats (indices 63-67)
+            if (inputBuffer.remaining() > rightHandStartByte) {
+                inputBuffer.position(rightHandStartByte)
+                val verifyValues = FloatArray(minOf(5, (inputBuffer.remaining() / 4).toInt()))
+                for (idx in verifyValues.indices) {
+                    verifyValues[idx] = inputBuffer.getFloat()
+                }
+                LogUtils.debugIfVerbose(TAG) { "ByteBuffer verification (right hand): floats[63-${63 + verifyValues.size - 1}]=[${verifyValues.joinToString()}]" }
             }
-            LogUtils.debugIfVerbose(TAG) { "ByteBuffer verification: first3values=[${verifyValues.joinToString()}]" }
         }
         inputBuffer.position(verifyPosition)
         

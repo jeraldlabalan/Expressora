@@ -11,6 +11,7 @@ import android.util.Log
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageProxy
 import com.example.expressora.recognition.config.PerformanceConfig
+import com.example.expressora.recognition.utils.LogUtils
 import java.io.ByteArrayOutputStream
 
 class CameraBitmapAnalyzer(
@@ -55,7 +56,7 @@ class CameraBitmapAnalyzer(
             }
             
             if (!loggedOnce) {
-                Log.i(TAG, "Camera analyzer active: " +
+                Log.i(TAG, "📷 Camera analyzer active: " +
                         "resolution=${image.width}x${image.height}, " +
                         "adaptiveSkip=${PerformanceConfig.ADAPTIVE_SKIP_ENABLED}, " +
                         "baseSkip=$frameSkip, " +
@@ -63,8 +64,19 @@ class CameraBitmapAnalyzer(
                 loggedOnce = true
             }
             
+            // Log frame processing for debugging (every 30 frames to avoid spam)
+            if (frameCounter % 30 == 0) {
+                Log.d(TAG, "📷 Processing frame #$frameCounter @ ${System.currentTimeMillis()}")
+            }
+            
             val bitmap = image.toBitmapDirect() ?: return
             val rotated = rotateBitmap(bitmap, image.imageInfo.rotationDegrees)
+            
+            // NOTE: We do NOT horizontally flip/mirror the image before sending to MediaPipe.
+            // The bitmap orientation matches the actual camera view (not mirrored).
+            // MediaPipe's handedness labels are reversed relative to the person's actual hands,
+            // so we handle the reversal in HandToFeaturesBridge mapping logic instead.
+            // This ensures consistent behavior for both front and rear cameras.
             
             // Optional downscaling (usually disabled with 480x360 input)
             val finalBitmap = if (PerformanceConfig.ENABLE_DOWNSCALING && 
@@ -75,9 +87,11 @@ class CameraBitmapAnalyzer(
                 rotated
             }
             
+            // Pass bitmap to callback for processing
+            LogUtils.debugIfVerbose(TAG) { "📷 Frame converted to bitmap: ${finalBitmap.width}x${finalBitmap.height}, calling onBitmap callback" }
             onBitmap(finalBitmap)
         } catch (error: Throwable) {
-            Log.e(TAG, "Frame analysis error: ${error.message}", error)
+            Log.e(TAG, "❌ Frame analysis error: ${error.message}", error)
         } finally {
             image.close()
         }

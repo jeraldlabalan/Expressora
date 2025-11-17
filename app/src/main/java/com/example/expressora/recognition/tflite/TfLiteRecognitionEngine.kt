@@ -118,11 +118,15 @@ class TfLiteRecognitionEngine(
                 val featureHash = calculateArrayHash(feature)
                 val featureChangedSignificantly = kotlin.math.abs(featureHash - lastFeatureVectorHash) > 1000
                 
+                // Log feature vector changes for debugging
                 if (featureChangedSignificantly) {
-                    LogUtils.d(TAG) { "Feature vector changed significantly: hash=$featureHash (was=$lastFeatureVectorHash), clearing rolling buffer" }
+                    LogUtils.d(TAG) { "📊 Feature vector changed significantly: hash=$featureHash (was=$lastFeatureVectorHash), nonZero=${featureStats.nonZeroCount}, clearing rolling buffer" }
                     rollingBuffer.clear()
                     lastFeatureVectorHash = featureHash
+                } else if (lastFeatureVectorHash != 0) {
+                    LogUtils.debugIfVerbose(TAG) { "Feature vector similar: hash=$featureHash (was=$lastFeatureVectorHash), nonZero=${featureStats.nonZeroCount}" }
                 } else {
+                    LogUtils.d(TAG) { "📊 First feature vector received: hash=$featureHash, nonZero=${featureStats.nonZeroCount}" }
                     lastFeatureVectorHash = featureHash
                 }
                 
@@ -144,38 +148,12 @@ class TfLiteRecognitionEngine(
                 val tflite = obtainInterpreter()
                 
                 // CRITICAL: Always call runMultiOutput to ensure ByteBuffer is written with fresh data
-                // This prevents the buffer from being stale even if we use a cached result
-                LogUtils.debugIfVerbose(TAG) { "🔄 Running inference (buffer will be written with fresh data)" }
+                // This ensures we always process the current frame's data
+                LogUtils.d(TAG) { "🔄 Running inference on frame @ ${System.currentTimeMillis()}, featureVectorHash=$featureHash" }
                 val result = tflite.runMultiOutput(feature)
                 
-                // Check if we can use cached result AFTER inference (for display only)
-                // This ensures the buffer is always updated, but we can skip emitting if cache is valid
-                if (PerformanceConfig.ENABLE_RESULT_CACHING) {
-                    val now = SystemClock.elapsedRealtime()
-                    val cached = cachedResult
-                    if (cached != null && (now - cacheTimestamp) < PerformanceConfig.CACHE_DURATION_MS) {
-                        // Check if feature vector has changed significantly (non-zero count changed by >20%)
-                        val cachedNonZero = cached.debugInfo?.featureVectorStats?.nonZeroCount ?: 0
-                        val currentNonZero = featureStats.nonZeroCount
-                        val changePercent = if (cachedNonZero > 0) {
-                            kotlin.math.abs(currentNonZero - cachedNonZero).toFloat() / cachedNonZero
-                        } else {
-                            1f // If cached had no features, always recompute
-                        }
-                        
-                        // If feature vector changed significantly (>20%), use new result
-                        if (changePercent <= 0.2f) {
-                            LogUtils.verboseIfVerbose(TAG) { "Using cached result for display (but buffer was updated): ${cached.glossLabel} (${cached.glossConf})" }
-                            _results.emit(cached)
-                            _events.emit(GlossEvent.InProgress(listOf(cached.glossLabel)))
-                            // Continue processing to update cache with new result
-                        } else {
-                            LogUtils.d(TAG) { "Feature vector changed significantly (${(changePercent * 100).toInt()}%), using new result" }
-                            cachedResult = null
-                            cacheTimestamp = 0L
-                        }
-                    }
-                }
+                // Log that inference completed with fresh data
+                LogUtils.debugIfVerbose(TAG) { "Inference completed, processing new result" }
                 
                 // DEBUG: Log raw logits from model (only in debug builds)
                 val logitsStats = calculateFeatureStats(result.glossLogits)
@@ -319,7 +297,7 @@ class TfLiteRecognitionEngine(
                         }
                 )
                 
-                // Emit detailed result
+                // Emit detailed result - ALWAYS emit fresh result from current inference
                 val recognitionResult = RecognitionResult(
                     glossLabel = mappedLabel,
                     glossConf = bestConf,
@@ -329,12 +307,17 @@ class TfLiteRecognitionEngine(
                     debugInfo = debugInfo
                 )
                 
-                // Cache stable results
+                // Log result emission for debugging
+                LogUtils.d(TAG) { "✅ Emitting fresh recognition result: label='$mappedLabel', conf=$bestConf (${(bestConf * 100).toInt()}%), origin='${originBadge.origin}'" }
+                
+                // Cache stable results for potential future use (but always emit fresh results)
                 if (PerformanceConfig.ENABLE_RESULT_CACHING && bestConf >= 0.8f) {
                     cachedResult = recognitionResult
                     cacheTimestamp = SystemClock.elapsedRealtime()
+                    LogUtils.debugIfVerbose(TAG) { "Cached result for future reference: $mappedLabel" }
                 }
                 
+                // ALWAYS emit the fresh result from current inference
                 _results.emit(recognitionResult)
                 
                 // Emit simple event for backward compatibility
@@ -389,12 +372,33 @@ class TfLiteRecognitionEngine(
     
     /**
      * Calculate a simple hash of array for change detection
+     * For two-hand vectors, left hand (first 63 values) may be zeros, so we check
+     * both the left hand portion AND the right hand portion (indices 63-125)
+     * to detect changes even when only one hand is present.
      */
     private fun calculateArrayHash(array: FloatArray): Int {
         var hash = 0
-        val valuesToCheck = minOf(10, array.size) // Check first 10 values
-        for (i in 0 until valuesToCheck) {
+        // Check first 10 values (left hand start)
+        val leftCheck = minOf(10, array.size)
+        for (i in 0 until leftCheck) {
             hash = 31 * hash + array[i].toBits()
+        }
+        // Also check right hand portion (starting at index 63 for two-hand vectors)
+        // This ensures we detect changes even when left hand is empty
+        if (array.size >= 126) {
+            // Two-hand vector: check right hand portion
+            val rightStart = 63
+            val rightCheck = minOf(10, array.size - rightStart)
+            for (i in rightStart until (rightStart + rightCheck)) {
+                hash = 31 * hash + array[i].toBits()
+            }
+        } else if (array.size > 10) {
+            // One-hand vector: check middle and end portions
+            val midStart = array.size / 2
+            val midCheck = minOf(10, array.size - midStart)
+            for (i in midStart until (midStart + midCheck)) {
+                hash = 31 * hash + array[i].toBits()
+            }
         }
         return hash
     }
