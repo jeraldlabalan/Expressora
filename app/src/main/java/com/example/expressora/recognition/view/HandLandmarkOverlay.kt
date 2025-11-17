@@ -5,6 +5,7 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import android.util.AttributeSet
+import android.util.Log
 import android.view.View
 import com.example.expressora.recognition.config.PerformanceConfig
 import com.google.mediapipe.tasks.vision.handlandmarker.HandLandmarkerResult
@@ -129,9 +130,21 @@ class HandLandmarkOverlay @JvmOverloads constructor(
         for (handIndex in landmarks.indices) {
             val handLandmarks = landmarks[handIndex]
             
-            // Determine hand color (left = green, right = blue)
-            val isLeftHand = handednesses.getOrNull(handIndex)
-                ?.firstOrNull()?.categoryName()?.equals("Left", ignoreCase = true) ?: false
+            // Get raw handedness from MediaPipe
+            val rawHandedness = handednesses.getOrNull(handIndex)?.firstOrNull()
+            val rawCategory = rawHandedness?.categoryName() ?: "Unknown"
+            val rawScore = rawHandedness?.score() ?: 0f
+            
+            // FIX: MediaPipe's handedness labels are reversed relative to the person's actual hands
+            // When MediaPipe says "Left", it's actually the person's right hand, and vice versa
+            // Determine hand color (left = green, right = blue) with reversed mapping
+            val isLeftHand = rawCategory.equals("Right", ignoreCase = true) // MediaPipe "Right" = person's actual left
+            
+            // CRITICAL: Log displayed handedness label
+            val displayedLabel = if (isLeftHand) "Left" else "Right"
+            Log.d("ExpressoraHandedness", "Displayed handedness: handIndex=$handIndex, " +
+                    "displayLabel='$displayedLabel' (from raw='$rawCategory', score=$rawScore) " +
+                    "[MediaPipe '$rawCategory' → person's actual $displayedLabel hand]")
             
             val handColor = if (isLeftHand) {
                 Color.rgb(76, 175, 80) // Green for left hand

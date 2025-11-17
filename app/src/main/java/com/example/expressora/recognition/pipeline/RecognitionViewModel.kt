@@ -152,14 +152,14 @@ class RecognitionViewModel(
      * Process recognition result with debouncing and temporal smoothing
      */
     private fun processRecognitionResult(result: RecognitionResult) {
-        LogUtils.verboseIfVerbose(TAG) { "Processing recognition result: label='${result.glossLabel}', conf=${result.glossConf}, " +
+        LogUtils.d(TAG) { "📥 Processing recognition result: label='${result.glossLabel}', conf=${result.glossConf} (${(result.glossConf * 100).toInt()}%), " +
                 "origin='${result.originLabel}', originConf=${result.originConf}" }
         
         val isHighConfidence = result.glossConf >= 0.75f
         val isSignChange = result.glossLabel != lastRecognitionLabel
         
         if (isSignChange) {
-            LogUtils.d(TAG) { "Sign changed: '${lastRecognitionLabel}' -> '${result.glossLabel}'" }
+            LogUtils.d(TAG) { "🔄 Sign changed: '${lastRecognitionLabel}' -> '${result.glossLabel}'" }
         }
         
         // Track stuck detection
@@ -206,7 +206,7 @@ class RecognitionViewModel(
                         stableFrameCount >= PerformanceConfig.MIN_STABLE_FRAMES
         
         if (shouldEmit) {
-            LogUtils.d(TAG) { "Emitting recognition result: label='${result.glossLabel}', conf=${result.glossConf}, " +
+            LogUtils.d(TAG) { "✅ UPDATING ViewModel state: label='${result.glossLabel}', conf=${result.glossConf}, " +
                     "stableFrames=$stableFrameCount, isHighConf=$isHighConfidence, isSignChange=$isSignChange" }
             _recognitionResult.value = result
             
@@ -218,13 +218,23 @@ class RecognitionViewModel(
                 accumulator.onRecognitionResult(result)
             }
         } else {
-            LogUtils.verboseIfVerbose(TAG) { "Skipping emission: stableFrames=$stableFrameCount (need ${PerformanceConfig.MIN_STABLE_FRAMES}), " +
-                    "isHighConf=$isHighConfidence, isSignChange=$isSignChange" }
+            LogUtils.d(TAG) { "⏸️ Skipping state update: stableFrames=$stableFrameCount (need ${PerformanceConfig.MIN_STABLE_FRAMES}), " +
+                    "isHighConf=$isHighConfidence, isSignChange=$isSignChange, currentLabel='${result.glossLabel}'" }
         }
     }
     
     fun onFeatures(vec: FloatArray) = viewModelScope.launch {
-        LogUtils.verboseIfVerbose(TAG) { "onFeatures called: vecSize=${vec.size}, nonZero=${vec.count { it != 0f }}" }
+        val nonZeroCount = vec.count { it != 0f }
+        // Log first few values (left hand, may be zeros) AND right hand portion (indices 63-67)
+        val rightHandStart = if (vec.size >= 126) 63 else vec.size / 2
+        val rightHandSample = if (vec.size > rightHandStart) {
+            vec.slice(rightHandStart until minOf(rightHandStart + 5, vec.size))
+        } else {
+            emptyList<Float>()
+        }
+        LogUtils.d(TAG) { "📤 onFeatures called: vecSize=${vec.size}, nonZero=$nonZeroCount, " +
+                "leftHand[0-4]=[${vec.take(5).joinToString()}], " +
+                "rightHand[$rightHandStart-${rightHandStart + rightHandSample.size - 1}]=[${rightHandSample.joinToString()}]" }
         engine.onLandmarks(vec)
     }
     

@@ -21,22 +21,43 @@ object HandToFeaturesBridge {
         Log.d(TAG, "Extracting hands: totalHands=${landmarks.size}, handednesses=${handednesses.size}, processing=$size")
         
         for (index in 0 until size) {
-            val category = handednesses[index].firstOrNull()?.categoryName() ?: continue
+            val handedness = handednesses[index].firstOrNull()
+            val category = handedness?.categoryName() ?: continue
+            val score = handedness.score()
             val points = landmarks[index].map { landmark ->
                 Point3(landmark.x(), landmark.y(), landmark.z())
             }
             
+            // CRITICAL: Log raw handedness from MediaPipe before mapping
+            Log.d("ExpressoraHandedness", "Raw handedness: handIndex=$index, " +
+                    "label='$category', score=$score, landmarks=${points.size}")
+            
             // DEBUG: Log landmark extraction
             Log.v(TAG, "Hand $index: category='$category', landmarks=${points.size}")
             
+            // FIX: MediaPipe's handedness labels are reversed relative to the person's actual hands
+            // When MediaPipe says "Left", it's actually the person's right hand, and vice versa
+            // This is because MediaPipe's handedness is based on the image orientation it sees
             when {
                 category.equals(LEFT, ignoreCase = true) -> {
-                    left = points
-                    Log.d(TAG, "Left hand extracted: ${points.size} landmarks")
+                    // MediaPipe "Left" = person's actual right hand
+                    right = points
+                    // CRITICAL: Log mapped handedness after processing
+                    Log.d("ExpressoraHandedness", "Mapped handedness: appSide=RIGHT (from raw='$category', score=$score) " +
+                            "[MediaPipe 'Left' → person's actual RIGHT hand]")
+                    Log.d(TAG, "Right hand extracted: ${points.size} landmarks")
                 }
                 category.equals(RIGHT, ignoreCase = true) -> {
-                    right = points
-                    Log.d(TAG, "Right hand extracted: ${points.size} landmarks")
+                    // MediaPipe "Right" = person's actual left hand
+                    left = points
+                    // CRITICAL: Log mapped handedness after processing
+                    Log.d("ExpressoraHandedness", "Mapped handedness: appSide=LEFT (from raw='$category', score=$score) " +
+                            "[MediaPipe 'Right' → person's actual LEFT hand]")
+                    Log.d(TAG, "Left hand extracted: ${points.size} landmarks")
+                }
+                else -> {
+                    // Log unknown handedness category
+                    Log.w("ExpressoraHandedness", "Unknown handedness category: '$category' (score=$score)")
                 }
             }
         }
