@@ -7,6 +7,8 @@ import com.example.expressora.recognition.engine.RecognitionEngine
 import com.example.expressora.recognition.model.ModelSignature
 import com.example.expressora.recognition.pipeline.RecognitionViewModelFactory
 import com.example.expressora.recognition.tflite.TfLiteRecognitionEngine
+import com.example.expressora.recognition.utils.DeviceCapabilityDetector
+import com.example.expressora.recognition.utils.LogUtils
 import org.json.JSONObject
 
 object RecognitionProvider {
@@ -36,17 +38,50 @@ object RecognitionProvider {
     private var modelSignature: ModelSignature? = null
 
     fun selectModel(context: Context): String {
-        if (selectedModel != null) return selectedModel!!
+        if (selectedModel != null) {
+            LogUtils.d(TAG) { "Using cached model selection: $selectedModel" }
+            return selectedModel!!
+        }
         
-        val chosen = MODEL_CANDIDATES.firstOrNull { candidate ->
-            runCatching {
+        // Check device capabilities for optimal model selection
+        val capabilities = DeviceCapabilityDetector.checkCapabilities(context)
+        val recommendedModelType = capabilities.recommendedModelType
+        val recommendedFilename = DeviceCapabilityDetector.getModelFilename(recommendedModelType)
+        
+        LogUtils.d(TAG) {
+            "Device capabilities: GPU=${capabilities.hasGpu}, NNAPI=${capabilities.hasNnapi}, " +
+            "Recommended: ${recommendedModelType.name} model"
+        }
+        
+        // Try recommended model first, then fall back to available models
+        val preferredOrder = listOf(recommendedFilename) + MODEL_CANDIDATES.filter { it != recommendedFilename }
+        
+        LogUtils.d(TAG) { "Selecting model from candidates: ${preferredOrder.joinToString()}" }
+        val chosen = preferredOrder.firstOrNull { candidate ->
+            val exists = runCatching {
                 context.assets.open(candidate).close()
                 true
             }.getOrElse { false }
+            LogUtils.verboseIfVerbose(TAG) { "Checking model '$candidate': exists=$exists" }
+            exists
         } ?: MODEL_CANDIDATES.last()
         
         selectedModel = chosen
-        Log.i(TAG, "Selected model: $chosen")
+        val actualModelType = when {
+            chosen.contains("int8", ignoreCase = true) -> DeviceCapabilityDetector.ModelType.INT8
+            chosen.contains("fp16", ignoreCase = true) -> DeviceCapabilityDetector.ModelType.FP16
+            else -> DeviceCapabilityDetector.ModelType.FP32
+        }
+        
+        if (actualModelType != recommendedModelType) {
+            LogUtils.w(TAG) {
+                "Selected model ($chosen) differs from recommended (${recommendedModelType.name}). " +
+                "Recommended model may not be available in assets."
+            }
+        } else {
+            LogUtils.i(TAG) { "✅ Selected optimal model: $chosen (${actualModelType.name})" }
+        }
+        
         return chosen
     }
     
@@ -117,8 +152,12 @@ object RecognitionProvider {
     }.getOrElse { false }
 
     fun provideEngine(context: Context): RecognitionEngine {
+        Log.d(TAG, "Providing RecognitionEngine")
         val model = selectModel(context)
         val signature = getModelSignature(context)
+        
+        Log.d(TAG, "Creating TfLiteRecognitionEngine: model='$model', featureDim=$FEATURE_DIM, " +
+                "hasMultiHead=${signature?.isMultiHead()}")
         
         return TfLiteRecognitionEngine(
             context = context.applicationContext,
@@ -127,7 +166,9 @@ object RecognitionProvider {
             labelMappedAsset = LABELS_MAPPED_ASSET,
             featureDim = FEATURE_DIM,
             modelSignature = signature
-        )
+        ).also {
+            Log.i(TAG, "✅ RecognitionEngine created successfully")
+        }
     }
 
     fun provideViewModelFactory(context: Context): RecognitionViewModelFactory {

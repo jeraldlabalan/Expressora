@@ -2,6 +2,7 @@ package com.example.expressora.recognition.mediapipe
 
 import android.content.Context
 import android.graphics.Bitmap
+import android.os.Build
 import android.os.SystemClock
 import android.util.Log
 import com.example.expressora.recognition.config.PerformanceConfig
@@ -12,6 +13,7 @@ import com.google.mediapipe.tasks.vision.core.RunningMode
 import com.google.mediapipe.tasks.vision.handlandmarker.HandLandmarker
 import com.google.mediapipe.tasks.vision.handlandmarker.HandLandmarkerResult
 import java.util.concurrent.atomic.AtomicInteger
+import org.tensorflow.lite.gpu.CompatibilityList
 
 class HandLandmarkerEngine(
     context: Context,
@@ -47,6 +49,13 @@ class HandLandmarkerEngine(
     private val smoothingWindowSize = PerformanceConfig.HAND_SMOOTHING_WINDOW
 
     private val landmarker: HandLandmarker
+    private val delegateUsed: DelegateType
+    private val runningMode: RunningMode
+
+    enum class DelegateType {
+        GPU,
+        CPU
+    }
 
     init {
         Log.i(TAG, "Initializing HandLandmarkerEngine...")
@@ -62,92 +71,46 @@ class HandLandmarkerEngine(
             Log.i(TAG, "✓ Asset $MODEL_ASSET_PATH found")
         }
         
+        val delegateType = selectDelegate()
+        delegateUsed = delegateType
+        runningMode = selectRunningMode()
+
         val baseOptions = BaseOptions.builder()
             .setModelAssetPath(MODEL_ASSET_PATH)
             .build()
-        val options = HandLandmarker.HandLandmarkerOptions.builder()
+        val optionsBuilder = HandLandmarker.HandLandmarkerOptions.builder()
             .setBaseOptions(baseOptions)
             .setNumHands(maxHands)
             .setMinHandDetectionConfidence(PerformanceConfig.HAND_DETECTION_CONFIDENCE)
             .setMinHandPresenceConfidence(PerformanceConfig.HAND_PRESENCE_CONFIDENCE)
             .setMinTrackingConfidence(PerformanceConfig.HAND_TRACKING_CONFIDENCE)
-            .setRunningMode(RunningMode.LIVE_STREAM)
-            .setResultListener { result, _ ->
-                resultsReceived.incrementAndGet()
-                val numHands = result.landmarks().size
-                
-                // Tracking drift watchdog: monitor hand loss and adjust cadence
-                handleTrackingDrift(numHands)
-                
-                if (numHands > 0) {
-                    // Apply additional confidence filtering
-                    val firstHandScore = result.handednesses()
-                        .firstOrNull()?.firstOrNull()?.score() ?: 0f
-                    
-                    if (firstHandScore >= PerformanceConfig.MIN_HAND_CONFIDENCE_FILTER) {
-                        handsDetected.incrementAndGet()
-                        
-                        // Motion detection: skip inference if hand is stationary
-                        val shouldInvoke = if (PerformanceConfig.ENABLE_MOTION_DETECTION) {
-                            val currentLandmarks = result.landmarks().firstOrNull()?.toList()
-                            val hasMotion = detectMotion(currentLandmarks)
-                            
-                            if (!hasMotion) {
-                                framesWithoutMotion++
-                                // Skip inference after N frames without motion
-                                if (framesWithoutMotion <= PerformanceConfig.SKIP_FRAMES_WHEN_STILL) {
-                                    if (PerformanceConfig.VERBOSE_LOGGING) {
-                                        Log.v(TAG, "Hand stationary, skipping inference ($framesWithoutMotion/${PerformanceConfig.SKIP_FRAMES_WHEN_STILL})")
-                                    }
-                                    false
-                                } else {
-                                    // Still process occasionally even if no motion
-                                    true
-                                }
-                            } else {
-                                framesWithoutMotion = 0
-                                true
-                            }
-                        } else {
-                            true
-                        }
-                        
-                        if (shouldInvoke) {
-                            if (PerformanceConfig.VERBOSE_LOGGING) {
-                                Log.d(TAG, "✓ Result callback: $numHands hand(s) detected! (confidence: $firstHandScore)")
-                            }
-                            onResult?.invoke(result)
-                        }
-                        
-                        // Update previous landmarks for next comparison
-                        if (PerformanceConfig.ENABLE_MOTION_DETECTION) {
-                            previousLandmarks = result.landmarks().firstOrNull()?.toList()
-                        }
-                    } else {
-                        if (PerformanceConfig.VERBOSE_LOGGING) {
-                            Log.v(TAG, "Hand detected but confidence too low: $firstHandScore")
-                        }
-                    }
-                } else {
-                    previousLandmarks = null
-                    framesWithoutMotion = 0
-                    if (PerformanceConfig.VERBOSE_LOGGING) {
-                        Log.v(TAG, "Result callback: 0 hands detected")
-                    }
+            .setRunningMode(runningMode)
+        if (runningMode == RunningMode.LIVE_STREAM) {
+            optionsBuilder
+                .setResultListener { result, _ ->
+                    handleResult(result)
                 }
-            }
-            .setErrorListener { error ->
-                Log.e(TAG, "❌ MediaPipe error: ${error.message}", error)
+                .setErrorListener { error ->
+                    Log.e(TAG, "❌ MediaPipe error: ${error.message}", error)
+                    onError?.invoke(error)
+                }
+        } else {
+            optionsBuilder.setErrorListener { error ->
+                Log.e(TAG, "❌ MediaPipe error (video mode): ${error.message}", error)
                 onError?.invoke(error)
             }
-            .build()
+        }
+        val options = optionsBuilder.build()
         landmarker = HandLandmarker.createFromOptions(context, options)
-        Log.i(TAG, "✓ HandLandmarker initialized successfully with confidence thresholds: " +
+        Log.i(TAG, "✓ HandLandmarker initialized successfully with delegate=$delegateType, runningMode=$runningMode and confidence thresholds: " +
                 "detection=${PerformanceConfig.HAND_DETECTION_CONFIDENCE}, " +
                 "presence=${PerformanceConfig.HAND_PRESENCE_CONFIDENCE}, " +
                 "tracking=${PerformanceConfig.HAND_TRACKING_CONFIDENCE}, " +
                 "filter=${PerformanceConfig.MIN_HAND_CONFIDENCE_FILTER}")
     }
+
+    fun getDelegateType(): DelegateType = delegateUsed
+    fun getRunningMode(): RunningMode = runningMode
 
     fun detectAsync(frame: Bitmap, timestampMs: Long = SystemClock.uptimeMillis()) {
         try {
@@ -159,7 +122,17 @@ class HandLandmarkerEngine(
             forceDetectNext = false
             
             val mpImage = BitmapImageBuilder(frame).build()
-            landmarker.detectAsync(mpImage, timestampMs)
+            when (runningMode) {
+                RunningMode.LIVE_STREAM -> landmarker.detectAsync(mpImage, timestampMs)
+                RunningMode.VIDEO -> {
+                    val result = landmarker.detectForVideo(mpImage, timestampMs)
+                    handleResult(result)
+                }
+                RunningMode.IMAGE -> {
+                    val result = landmarker.detect(mpImage)
+                    handleResult(result)
+                }
+            }
             
             // Log progress less frequently to reduce overhead
             if (PerformanceConfig.VERBOSE_LOGGING && framesProcessed.get() % 30 == 0) {
@@ -247,6 +220,82 @@ class HandLandmarkerEngine(
         lastHandsDetected = handsCurrentlyDetected
     }
 
+    private fun selectRunningMode(): RunningMode {
+        val isKnownLiveStreamCrashDevice =
+            Build.MANUFACTURER.equals("vivo", ignoreCase = true) &&
+            Build.MODEL.equals("V2318", ignoreCase = true)
+        return if (isKnownLiveStreamCrashDevice) {
+            RunningMode.VIDEO
+        } else {
+            RunningMode.LIVE_STREAM
+        }
+    }
+
+    private fun handleResult(result: HandLandmarkerResult) {
+        resultsReceived.incrementAndGet()
+        val numHands = result.landmarks().size
+
+        // Tracking drift watchdog: monitor hand loss and adjust cadence
+        handleTrackingDrift(numHands)
+
+        if (numHands > 0) {
+            // Apply additional confidence filtering
+            val firstHandScore = result.handednesses()
+                .firstOrNull()?.firstOrNull()?.score() ?: 0f
+
+            if (firstHandScore >= PerformanceConfig.MIN_HAND_CONFIDENCE_FILTER) {
+                handsDetected.incrementAndGet()
+
+                // Motion detection: skip inference if hand is stationary
+                val shouldInvoke = if (PerformanceConfig.ENABLE_MOTION_DETECTION) {
+                    val currentLandmarks = result.landmarks().firstOrNull()?.toList()
+                    val hasMotion = detectMotion(currentLandmarks)
+
+                    if (!hasMotion) {
+                        framesWithoutMotion++
+                        // Skip inference after N frames without motion
+                        if (framesWithoutMotion <= PerformanceConfig.SKIP_FRAMES_WHEN_STILL) {
+                            if (PerformanceConfig.VERBOSE_LOGGING) {
+                                Log.v(TAG, "Hand stationary, skipping inference ($framesWithoutMotion/${PerformanceConfig.SKIP_FRAMES_WHEN_STILL})")
+                            }
+                            false
+                        } else {
+                            // Still process occasionally even if no motion
+                            true
+                        }
+                    } else {
+                        framesWithoutMotion = 0
+                        true
+                    }
+                } else {
+                    true
+                }
+
+                if (shouldInvoke) {
+                    if (PerformanceConfig.VERBOSE_LOGGING) {
+                        Log.d(TAG, "✓ Result callback: $numHands hand(s) detected! (confidence: $firstHandScore)")
+                    }
+                    onResult?.invoke(result)
+                }
+
+                // Update previous landmarks for next comparison
+                if (PerformanceConfig.ENABLE_MOTION_DETECTION) {
+                    previousLandmarks = result.landmarks().firstOrNull()?.toList()
+                }
+            } else {
+                if (PerformanceConfig.VERBOSE_LOGGING) {
+                    Log.v(TAG, "Hand detected but confidence too low: $firstHandScore")
+                }
+            }
+        } else {
+            previousLandmarks = null
+            framesWithoutMotion = 0
+            if (PerformanceConfig.VERBOSE_LOGGING) {
+                Log.v(TAG, "Result callback: 0 hands detected")
+            }
+        }
+    }
+
     /**
      * Detect motion by comparing current landmarks with previous frame.
      * Returns true if significant motion detected, false if stationary.
@@ -288,6 +337,20 @@ class HandLandmarkerEngine(
     fun close() {
         landmarker.close()
         Log.i(TAG, "HandLandmarker closed")
+    }
+
+    private fun selectDelegate(): DelegateType {
+        val compatibilityList = runCatching { CompatibilityList() }.getOrNull()
+        val gpuSupported = compatibilityList?.isDelegateSupportedOnThisDevice == true
+        val isKnownBadGpuDevice =
+            Build.MANUFACTURER.equals("vivo", ignoreCase = true)
+                    || Build.BRAND.equals("vivo", ignoreCase = true)
+
+        return if (gpuSupported && !isKnownBadGpuDevice) {
+            DelegateType.GPU
+        } else {
+            DelegateType.CPU
+        }
     }
 }
 

@@ -4,6 +4,8 @@ import android.content.Context
 import android.util.Log
 import android.os.SystemClock
 import com.example.expressora.recognition.config.PerformanceConfig
+import com.example.expressora.recognition.utils.LogUtils
+import com.example.expressora.BuildConfig
 import com.example.expressora.recognition.diagnostics.RecognitionDiagnostics
 import com.example.expressora.recognition.engine.RecognitionEngine
 import com.example.expressora.recognition.model.GlossEvent
@@ -64,6 +66,15 @@ class TfLiteRecognitionEngine(
     // Result caching for stable predictions
     private var cachedResult: RecognitionResult? = null
     private var cacheTimestamp: Long = 0L
+    
+    // Track previous inputs/outputs for change detection
+    private var lastFeatureVectorHash: Int = 0
+    private var lastRawLogitsHash: Int = 0
+    private var staticOutputFrameCount = 0
+    private var lastRawLogits: FloatArray? = null
+    
+    // Option to bypass rolling buffer for debugging
+    private val bypassRollingBuffer = false // Set to true to see raw model outputs
 
     private val _events = MutableSharedFlow<GlossEvent>(replay = 1)
     override val events: Flow<GlossEvent> = _events.asSharedFlow()
@@ -96,29 +107,153 @@ class TfLiteRecognitionEngine(
                     RecognitionDiagnostics.logFPSIfNeeded()
                 }
                 
-                // Check if we can use cached result
+                // DEBUG: Log feature vector statistics (only in debug builds)
+                val featureStats = calculateFeatureStats(feature)
+                LogUtils.debugIfVerbose(TAG) { "Feature vector stats: size=${feature.size}, expected=$featureDim, " +
+                        "nonZero=${featureStats.nonZeroCount}, min=${featureStats.min}, " +
+                        "max=${featureStats.max}, mean=${featureStats.mean}, " +
+                        "isAllZeros=${featureStats.isAllZeros}, hasNaN=${featureStats.hasNaN}" }
+                
+                // Calculate feature vector hash to detect significant changes
+                val featureHash = calculateArrayHash(feature)
+                val featureChangedSignificantly = kotlin.math.abs(featureHash - lastFeatureVectorHash) > 1000
+                
+                if (featureChangedSignificantly) {
+                    LogUtils.d(TAG) { "Feature vector changed significantly: hash=$featureHash (was=$lastFeatureVectorHash), clearing rolling buffer" }
+                    rollingBuffer.clear()
+                    lastFeatureVectorHash = featureHash
+                } else {
+                    lastFeatureVectorHash = featureHash
+                }
+                
+                // Validation: Check if feature vector is valid
+                if (feature.size != featureDim) {
+                    Log.w(TAG, "Feature vector size mismatch: got ${feature.size}, expected $featureDim")
+                }
+                if (featureStats.isAllZeros) {
+                    Log.w(TAG, "WARNING: Feature vector is all zeros! Model will not produce valid results.")
+                    rollingBuffer.clear()
+                }
+                if (featureStats.hasNaN) {
+                    Log.w(TAG, "WARNING: Feature vector contains NaN values!")
+                }
+                
+                // CRITICAL: Always run inference to ensure buffer is written, even if we use cached result
+                // The caching should only affect result emission, not input preparation
+                ensureLabels()
+                val tflite = obtainInterpreter()
+                
+                // CRITICAL: Always call runMultiOutput to ensure ByteBuffer is written with fresh data
+                // This prevents the buffer from being stale even if we use a cached result
+                LogUtils.debugIfVerbose(TAG) { "🔄 Running inference (buffer will be written with fresh data)" }
+                val result = tflite.runMultiOutput(feature)
+                
+                // Check if we can use cached result AFTER inference (for display only)
+                // This ensures the buffer is always updated, but we can skip emitting if cache is valid
                 if (PerformanceConfig.ENABLE_RESULT_CACHING) {
                     val now = SystemClock.elapsedRealtime()
                     val cached = cachedResult
                     if (cached != null && (now - cacheTimestamp) < PerformanceConfig.CACHE_DURATION_MS) {
-                        _results.emit(cached)
-                        _events.emit(GlossEvent.InProgress(listOf(cached.glossLabel)))
-                        return@launch
+                        // Check if feature vector has changed significantly (non-zero count changed by >20%)
+                        val cachedNonZero = cached.debugInfo?.featureVectorStats?.nonZeroCount ?: 0
+                        val currentNonZero = featureStats.nonZeroCount
+                        val changePercent = if (cachedNonZero > 0) {
+                            kotlin.math.abs(currentNonZero - cachedNonZero).toFloat() / cachedNonZero
+                        } else {
+                            1f // If cached had no features, always recompute
+                        }
+                        
+                        // If feature vector changed significantly (>20%), use new result
+                        if (changePercent <= 0.2f) {
+                            LogUtils.verboseIfVerbose(TAG) { "Using cached result for display (but buffer was updated): ${cached.glossLabel} (${cached.glossConf})" }
+                            _results.emit(cached)
+                            _events.emit(GlossEvent.InProgress(listOf(cached.glossLabel)))
+                            // Continue processing to update cache with new result
+                        } else {
+                            LogUtils.d(TAG) { "Feature vector changed significantly (${(changePercent * 100).toInt()}%), using new result" }
+                            cachedResult = null
+                            cacheTimestamp = 0L
+                        }
                     }
                 }
                 
-                ensureLabels()
-                val tflite = obtainInterpreter()
-                val result = tflite.runMultiOutput(feature)
+                // DEBUG: Log raw logits from model (only in debug builds)
+                val logitsStats = calculateFeatureStats(result.glossLogits)
+                LogUtils.debugIfVerbose(TAG) { "Raw logits stats: size=${result.glossLogits.size}, " +
+                        "min=${logitsStats.min}, max=${logitsStats.max}, mean=${logitsStats.mean}, " +
+                        "isAllZeros=${logitsStats.isAllZeros}, hasNaN=${logitsStats.hasNaN}" }
+                
+                // Log top 5 raw logits (only in debug builds)
+                val topLogits = result.glossLogits.mapIndexed { index, value -> index to value }
+                    .sortedByDescending { it.second }
+                    .take(5)
+                LogUtils.debugIfVerbose(TAG) { "Top 5 raw logits: ${topLogits.joinToString { "idx=${it.first} val=${it.second}" }}" }
+                
+                // Detect static model output
+                val currentLogitsHash = calculateArrayHash(result.glossLogits)
+                val isStaticOutput = lastRawLogits != null && 
+                    currentLogitsHash == lastRawLogitsHash && 
+                    arraysEqual(result.glossLogits, lastRawLogits!!, tolerance = 0.0001f)
+                
+                if (isStaticOutput) {
+                    staticOutputFrameCount++
+                    if (staticOutputFrameCount > 3) {
+                        Log.e(TAG, "❌ CRITICAL: Model output is STATIC for $staticOutputFrameCount frames! " +
+                                "Clearing rolling buffer and forcing reset.")
+                        rollingBuffer.clear()
+                        staticOutputFrameCount = 0
+                    }
+                } else {
+                    staticOutputFrameCount = 0
+                }
+                lastRawLogitsHash = currentLogitsHash
+                lastRawLogits = result.glossLogits.copyOf()
+                
+                // Validation: Check if model output is valid
+                if (logitsStats.isAllZeros) {
+                    Log.e(TAG, "ERROR: Model output logits are all zeros! Model may not be working correctly.")
+                    rollingBuffer.clear()
+                }
+                if (logitsStats.hasNaN) {
+                    Log.e(TAG, "ERROR: Model output logits contain NaN values!")
+                }
+                
+                // Check if confidence is extremely low (suggests model not working)
+                val maxLogit = result.glossLogits.maxOrNull() ?: 0f
+                val minLogit = result.glossLogits.minOrNull() ?: 0f
+                val logitRange = maxLogit - minLogit
+                if (logitRange < 0.1f && staticOutputFrameCount > 5) {
+                    Log.e(TAG, "ERROR: Model output range is too small ($logitRange), model may not be working. Clearing buffer.")
+                    rollingBuffer.clear()
+                }
                 
                 reconcileLabels(result.glossLogits.size)
                 
-                // Add to rolling buffer and get averaged logits
-                rollingBuffer.add(result.glossLogits)
-                val avgLogits = rollingBuffer.getAverage()
+                // Add to rolling buffer and get averaged logits (or bypass if debugging)
+                val avgLogits = if (bypassRollingBuffer) {
+                    LogUtils.d(TAG) { "⚠️ BYPASSING rolling buffer - using raw logits" }
+                    result.glossLogits
+                } else {
+                    rollingBuffer.add(result.glossLogits)
+                    rollingBuffer.getAverage()
+                }
+                
+                // DEBUG: Log averaged logits (only in debug builds)
+                val avgLogitsStats = calculateFeatureStats(avgLogits)
+                LogUtils.debugIfVerbose(TAG) { "Averaged logits stats: size=${avgLogits.size}, " +
+                        "min=${avgLogitsStats.min}, max=${avgLogitsStats.max}, mean=${avgLogitsStats.mean}" }
                 
                 // Apply softmax
                 val probs = softmax(avgLogits)
+                
+                // DEBUG: Log softmax probabilities (top 5) - only in debug builds
+                val topProbs = probs.mapIndexed { index, value -> index to value }
+                    .sortedByDescending { it.second }
+                    .take(5)
+                LogUtils.debugIfVerbose(TAG) { "Top 5 softmax probabilities: ${topProbs.joinToString { pair ->
+                    val label = labels.getOrElse(pair.first) { "CLASS_${pair.first}" }
+                    "idx=${pair.first} label=$label prob=${pair.second}" 
+                }}" }
                 
                 // Get top prediction
                 val bestIndex = probs.indices.maxByOrNull { probs[it] } ?: 0
@@ -126,13 +261,63 @@ class TfLiteRecognitionEngine(
                 val rawLabel = labels.getOrElse(bestIndex) { "CLASS_$bestIndex" }
                 val mappedLabel = mappedLabels.getOrElse(bestIndex) { rawLabel }
                 
+                // DEBUG: Log final prediction (only in debug builds)
+                LogUtils.debugIfVerbose(TAG) { "Final prediction: label='$mappedLabel' (raw='$rawLabel'), " +
+                        "index=$bestIndex, confidence=$bestConf (${(bestConf * 100).toInt()}%)" }
+                
                 // Resolve origin
                 val originBadge = if (result.originLogits != null) {
                     val originProbs = softmax(result.originLogits)
+                    val originStats = calculateFeatureStats(result.originLogits)
+                    LogUtils.debugIfVerbose(TAG) { "Origin logits stats: size=${result.originLogits.size}, " +
+                            "min=${originStats.min}, max=${originStats.max}, mean=${originStats.mean}" }
+                    LogUtils.debugIfVerbose(TAG) { "Origin probabilities: ${originProbs.mapIndexed { i, p -> 
+                        "${originLabels.getOrElse(i) { "UNK" }}=$p" 
+                    }.joinToString()}" }
                     OriginResolver.resolveFromMultiHead(originLabels, originProbs)
                 } else {
                     OriginResolver.resolveFromPriors(rawLabel)
                 }
+                
+                LogUtils.debugIfVerbose(TAG) { "Origin badge: ${originBadge.origin}, confidence=${originBadge.confidence}" }
+                
+                // Build debug info
+                val debugInfo = com.example.expressora.recognition.model.DebugInfo(
+                    featureVectorStats = com.example.expressora.recognition.model.FeatureVectorStats(
+                        size = feature.size,
+                        expectedSize = featureDim,
+                        nonZeroCount = featureStats.nonZeroCount,
+                        min = featureStats.min,
+                        max = featureStats.max,
+                        mean = featureStats.mean,
+                        isAllZeros = featureStats.isAllZeros,
+                        hasNaN = featureStats.hasNaN
+                    ),
+                    rawLogits = topLogits.map { (idx, value) ->
+                        com.example.expressora.recognition.model.TopPrediction(
+                            index = idx,
+                            label = labels.getOrElse(idx) { "CLASS_$idx" },
+                            value = value
+                        )
+                    },
+                    softmaxProbs = topProbs.map { (idx, value) ->
+                        com.example.expressora.recognition.model.TopPrediction(
+                            index = idx,
+                            label = labels.getOrElse(idx) { "CLASS_$idx" },
+                            value = value
+                        )
+                    },
+                    averagedLogits = avgLogits.mapIndexed { idx, value -> idx to value }
+                        .sortedByDescending { it.second }
+                        .take(5)
+                        .map { (idx, value) ->
+                            com.example.expressora.recognition.model.TopPrediction(
+                                index = idx,
+                                label = labels.getOrElse(idx) { "CLASS_$idx" },
+                                value = value
+                            )
+                        }
+                )
                 
                 // Emit detailed result
                 val recognitionResult = RecognitionResult(
@@ -140,7 +325,8 @@ class TfLiteRecognitionEngine(
                     glossConf = bestConf,
                     glossIndex = bestIndex,
                     originLabel = originBadge.origin,
-                    originConf = originBadge.confidence
+                    originConf = originBadge.confidence,
+                    debugInfo = debugInfo
                 )
                 
                 // Cache stable results
@@ -159,6 +345,69 @@ class TfLiteRecognitionEngine(
                 _events.emit(GlossEvent.Error(t.message ?: "Recognition failure"))
             }
         }
+    }
+    
+    /**
+     * Calculate statistics for a feature vector or logits array
+     */
+    private data class FeatureStats(
+        val nonZeroCount: Int,
+        val min: Float,
+        val max: Float,
+        val mean: Float,
+        val isAllZeros: Boolean,
+        val hasNaN: Boolean
+    )
+    
+    private fun calculateFeatureStats(array: FloatArray): FeatureStats {
+        if (array.isEmpty()) {
+            return FeatureStats(0, 0f, 0f, 0f, true, false)
+        }
+        
+        var nonZeroCount = 0
+        var min = Float.MAX_VALUE
+        var max = Float.MIN_VALUE
+        var sum = 0f
+        var hasNaN = false
+        
+        for (value in array) {
+            if (value.isNaN()) {
+                hasNaN = true
+            } else {
+                if (value != 0f) nonZeroCount++
+                if (value < min) min = value
+                if (value > max) max = value
+                sum += value
+            }
+        }
+        
+        val mean = if (array.isNotEmpty()) sum / array.size else 0f
+        val isAllZeros = nonZeroCount == 0
+        
+        return FeatureStats(nonZeroCount, min, max, mean, isAllZeros, hasNaN)
+    }
+    
+    /**
+     * Calculate a simple hash of array for change detection
+     */
+    private fun calculateArrayHash(array: FloatArray): Int {
+        var hash = 0
+        val valuesToCheck = minOf(10, array.size) // Check first 10 values
+        for (i in 0 until valuesToCheck) {
+            hash = 31 * hash + array[i].toBits()
+        }
+        return hash
+    }
+    
+    /**
+     * Check if two arrays are equal within tolerance
+     */
+    private fun arraysEqual(a: FloatArray, b: FloatArray, tolerance: Float = 0.0001f): Boolean {
+        if (a.size != b.size) return false
+        for (i in a.indices) {
+            if (kotlin.math.abs(a[i] - b[i]) > tolerance) return false
+        }
+        return true
     }
 
     private suspend fun ensureLabels() {

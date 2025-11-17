@@ -5,17 +5,69 @@
 # For more details, see
 #   http://developer.android.com/guide/developing/tools/proguard.html
 
-# If your project uses WebView with JS, uncomment the following
-# and specify the fully qualified class name to the JavaScript interface
-# class:
-#-keepclassmembers class fqcn.of.javascript.interface.for.webview {
-#   public *;
-#}
+# Keep line numbers for debugging
+-keepattributes SourceFile,LineNumberTable
+-renamesourcefileattribute SourceFile
 
-# Uncomment this to preserve the line number information for
-# debugging stack traces.
-#-keepattributes SourceFile,LineNumberTable
+# TensorFlow Lite - Keep model classes and native methods
+-keep class org.tensorflow.lite.** { *; }
+-keep class com.example.expressora.recognition.tflite.** { *; }
+-keep class com.example.expressora.recognition.mediapipe.** { *; }
 
-# If you keep the line number information, uncomment this to
-# hide the original source file name.
-#-renamesourcefileattribute SourceFile
+# Keep TFLite model assets
+-keepclassmembers class * {
+    @org.tensorflow.lite.support.common.FileUtil *;
+}
+
+# MediaPipe
+-keep class com.google.mediapipe.** { *; }
+-dontwarn com.google.mediapipe.**
+
+# Kotlin coroutines
+-keepnames class kotlinx.coroutines.internal.MainDispatcherFactory {}
+-keepnames class kotlinx.coroutines.CoroutineExceptionHandler {}
+-keepclassmembers class kotlinx.coroutines.** {
+    volatile <fields>;
+}
+
+# Kotlin serialization
+-keepattributes *Annotation*, InnerClasses
+-dontnote kotlinx.serialization.AnnotationsKt
+
+# Compose - keep ViewModel and StateFlow
+-keep class androidx.lifecycle.** { *; }
+-keep class androidx.compose.** { *; }
+-keepclassmembers class * extends androidx.lifecycle.ViewModel {
+    <init>(...);
+}
+
+# Keep recognition engine classes
+-keep class com.example.expressora.recognition.** { *; }
+-keepclassmembers class com.example.expressora.recognition.** {
+    *;
+}
+
+# Firebase
+-keep class com.google.firebase.** { *; }
+-dontwarn com.google.firebase.**
+
+# Keep BuildConfig for debug checks
+-keepclassmembers class com.example.expressora.BuildConfig {
+    public static final boolean DEBUG;
+}
+
+# Prevent obfuscation of native method names for JNI
+-keepclasseswithmembernames class * {
+    native <methods>;
+}
+
+# Keep Parcelable implementations
+-keepclassmembers class * implements android.os.Parcelable {
+    public static final ** CREATOR;
+}
+
+# Keep custom views
+-keep class com.example.expressora.recognition.view.** { *; }
+-keepclassmembers class com.example.expressora.recognition.view.** {
+    public <init>(...);
+}

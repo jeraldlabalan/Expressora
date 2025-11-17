@@ -33,7 +33,8 @@ object PerformanceConfig {
         val jpegQuality: Int,
         val enableDownscaling: Boolean,
         val downscaleWidth: Int,
-        val downscaleHeight: Int
+        val downscaleHeight: Int,
+        val enableOpencvPreprocessing: Boolean = false
     )
 
     data class MediaPipeSettings(
@@ -125,7 +126,8 @@ object PerformanceConfig {
                 jpegQuality = 70,
                 enableDownscaling = false,
                 downscaleWidth = 240,
-                downscaleHeight = 180
+                downscaleHeight = 180,
+                enableOpencvPreprocessing = false
             ),
             mediaPipe = MediaPipeSettings(
                 numHands = 2,
@@ -156,12 +158,12 @@ object PerformanceConfig {
                 delegateProbeOrder = listOf("GPU", "NNAPI", "CPU")
             ),
             recognition = RecognitionSettings(
-                rollingBufferSize = 5,
-                minStableFrames = 3,
-                debounceFrames = 4,
+                rollingBufferSize = 3,
+                minStableFrames = 1,
+                debounceFrames = 2,
                 confidenceThreshold = 0.70f,
-                enableResultCaching = true,
-                cacheDurationMs = 300L
+                enableResultCaching = false,
+                cacheDurationMs = 100L
             ),
             adaptive = AdaptiveSettings(
                 targetFps = 16,
@@ -227,12 +229,12 @@ object PerformanceConfig {
                 delegateProbeOrder = listOf("GPU", "NNAPI", "CPU")
             ),
             recognition = RecognitionSettings(
-                rollingBufferSize = 5,
-                minStableFrames = 3,
-                debounceFrames = 3,
+                rollingBufferSize = 3,
+                minStableFrames = 1,
+                debounceFrames = 2,
                 confidenceThreshold = 0.65f,
-                enableResultCaching = true,
-                cacheDurationMs = 300L
+                enableResultCaching = false,
+                cacheDurationMs = 100L
             ),
             adaptive = AdaptiveSettings(
                 targetFps = 18,
@@ -267,7 +269,8 @@ object PerformanceConfig {
                 jpegQuality = 90,
                 enableDownscaling = false,
                 downscaleWidth = 320,
-                downscaleHeight = 240
+                downscaleHeight = 240,
+                enableOpencvPreprocessing = false
             ),
             mediaPipe = MediaPipeSettings(
                 numHands = 2,
@@ -298,12 +301,12 @@ object PerformanceConfig {
                 delegateProbeOrder = listOf("GPU", "NNAPI", "CPU")
             ),
             recognition = RecognitionSettings(
-                rollingBufferSize = 7,
-                minStableFrames = 3,
-                debounceFrames = 3,
+                rollingBufferSize = 3,
+                minStableFrames = 1,
+                debounceFrames = 2,
                 confidenceThreshold = 0.60f,
-                enableResultCaching = true,
-                cacheDurationMs = 350L
+                enableResultCaching = false,
+                cacheDurationMs = 100L
             ),
             adaptive = AdaptiveSettings(
                 targetFps = 20,
@@ -447,6 +450,9 @@ object PerformanceConfig {
 
     val ENABLE_DOWNSCALING: Boolean
         get() = frame.enableDownscaling
+    
+    val ENABLE_OPENCV_PREPROCESSING: Boolean
+        get() = frame.enableOpencvPreprocessing
 
     val DOWNSCALE_WIDTH: Int
         get() = frame.downscaleWidth

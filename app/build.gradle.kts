@@ -1,4 +1,5 @@
 import java.net.URL
+import java.net.URI
 import java.time.Instant
 import org.gradle.api.DefaultTask
 import org.gradle.api.file.RegularFileProperty
@@ -27,6 +28,10 @@ android {
         versionName = "1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        
+        // Note: Baseline profiles can be enabled when using Android Gradle Plugin 7.4+
+        // and the androidx.profileinstaller:profileinstaller dependency.
+        // To enable: add the dependency and use the baseline profile plugin.
     }
 
     buildTypes {
@@ -125,6 +130,14 @@ dependencies {
     implementation("org.tensorflow:tensorflow-lite-gpu:2.14.0")
     implementation("org.tensorflow:tensorflow-lite-support:0.4.4")
     implementation("com.google.mediapipe:tasks-vision:latest.release")
+    
+    // OpenCV Android SDK for computer vision tasks
+    // Note: OpenCV for Android requires manual SDK integration or specific repository setup
+    // The standard Maven dependency doesn't exist. To enable OpenCV:
+    // 1. Download OpenCV Android SDK from https://opencv.org/releases/
+    // 2. Add as a module or configure a custom repository
+    // For now, commented out to allow builds to succeed
+    // implementation("org.opencv:opencv-android:4.8.0")
 
     implementation("com.google.android.gms:play-services-auth:21.2.0")
     implementation("androidx.compose.material:material:1.7.2")
@@ -183,7 +196,7 @@ dependencies {
     implementation(libs.androidx.compose.animation)
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test.ext:junit:1.1.5")
-    androidTestImplementation("androidx.test.espresso:espresso-core:3.5.1")
+    androidTestImplementation("androidx.test.espresso:espresso-core:3.5.0")
     androidTestImplementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)
     debugImplementation(libs.androidx.compose.ui.tooling)
@@ -317,7 +330,8 @@ abstract class DownloadTask : DefaultTask() {
         }
 
         runCatching {
-            val connection = URL(url.get())
+            val urlString = url.get()
+            val connection = URI.create(urlString).toURL()
             connection.openStream().use { inputStream ->
                 destination.outputStream().use { outputStream ->
                     inputStream.copyTo(outputStream)
@@ -415,7 +429,7 @@ tasks.register<Exec>("generateLabelsJson") {
         val candidate = npyFileProvider.orNull
         if (candidate == null) {
             val modelName = selectedTfliteFileProvider.orNull?.name ?: "<unknown>"
-            logger.warn("No labels .npy found for unified model. Runtime will synthesize CLASS_i labels. Run diagnoseRecognitionAssets for details.")
+            logger.warn("No labels .npy found for unified model '$modelName'. Runtime will synthesize CLASS_i labels. Run diagnoseRecognitionAssets for details.")
             return@onlyIf false
         }
         true
