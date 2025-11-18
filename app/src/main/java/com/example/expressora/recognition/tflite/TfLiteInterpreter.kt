@@ -368,6 +368,10 @@ class TfLiteInterpreter(
      * Create input buffer based on model's expected data type
      */
     private fun createInputBuffer(features: FloatArray): ByteBuffer {
+        // CRITICAL: Copy feature vector immediately to prevent array reuse/modification
+        // The array might be getting reused elsewhere, so we need a snapshot
+        val featuresSnapshot = features.copyOf()
+        
         // CRITICAL: Always create a fresh buffer - never reuse
         // Validation: Ensure quantization state is properly initialized
         if (interpreter == null) {
@@ -375,17 +379,17 @@ class TfLiteInterpreter(
         }
         
         // Log feature vector statistics BEFORE quantization (only in debug builds)
-        val featureMin = features.minOrNull() ?: 0f
-        val featureMax = features.maxOrNull() ?: 0f
-        val featureMean = features.average().toFloat()
+        val featureMin = featuresSnapshot.minOrNull() ?: 0f
+        val featureMax = featuresSnapshot.maxOrNull() ?: 0f
+        val featureMean = featuresSnapshot.average().toFloat()
         val featureStdDev = kotlin.math.sqrt(
-            features.map { (it - featureMean) * (it - featureMean) }.average()
+            featuresSnapshot.map { (it - featureMean) * (it - featureMean) }.average()
         ).toFloat()
-        val featureNonZero = features.count { it != 0f }
+        val featureNonZero = featuresSnapshot.count { it != 0f }
         
         LogUtils.debugIfVerbose(TAG) { "📊 Feature vector stats BEFORE quantization: " +
                 "min=$featureMin, max=$featureMax, mean=$featureMean, stdDev=$featureStdDev, " +
-                "nonZero=$featureNonZero/${features.size}" }
+                "nonZero=$featureNonZero/${featuresSnapshot.size}" }
         
         // Calculate expected quantized range based on scale/zeroPoint
         if (isInputQuantized) {
@@ -412,7 +416,7 @@ class TfLiteInterpreter(
             LogUtils.verboseIfVerbose(TAG) { "Quantizing first $logFirstN values:" }
             
             for (i in 0 until featureDim) {
-                val quantized = quantizeFloat(features[i])
+                val quantized = quantizeFloat(featuresSnapshot[i])
                 buf.put(quantized)
                 quantizedBytes.add(quantized)
                 
@@ -421,12 +425,12 @@ class TfLiteInterpreter(
                 }
                 
                 if (i < logFirstN) {
-                    LogUtils.verboseIfVerbose(TAG) { "  [$i] float=${features[i]} -> quantized=$quantized " +
-                            "(formula: round(${features[i]}/$inputScale)+$inputZeroPoint)" }
+                    LogUtils.verboseIfVerbose(TAG) { "  [$i] float=${featuresSnapshot[i]} -> quantized=$quantized " +
+                            "(formula: round(${featuresSnapshot[i]}/$inputScale)+$inputZeroPoint)" }
                 }
                 
                 if (sampleQuantizedValues.size < 5 && quantized != 0.toByte()) {
-                    sampleQuantizedValues.add(features[i] to quantized)
+                    sampleQuantizedValues.add(featuresSnapshot[i] to quantized)
                 }
             }
             
@@ -435,14 +439,14 @@ class TfLiteInterpreter(
             buf.limit(featureDim)
             
             // Analyze quantization effectiveness
-            val quantAnalysis = analyzeQuantizationEffectiveness(features)
+            val quantAnalysis = analyzeQuantizationEffectiveness(featuresSnapshot)
             LogUtils.debugIfVerbose(TAG) { "📊 Quantization analysis: ${quantAnalysis.distinctValues} distinct values from ${quantAnalysis.totalValues} features, " +
                     "featureRange=${quantAnalysis.featureRange}, quantizedRange=${quantAnalysis.quantizedRange}, " +
                     "sampleValues=[${quantAnalysis.sampleValues.take(5).joinToString()}]" }
             
             // CRITICAL: Check if quantization is collapsing values (always log errors)
             if (quantAnalysis.distinctValues < 10) {
-                Log.e(TAG, "❌ CRITICAL: Quantization collapsing values! Only ${quantAnalysis.distinctValues} distinct quantized values from ${features.size} features. " +
+                Log.e(TAG, "❌ CRITICAL: Quantization collapsing values! Only ${quantAnalysis.distinctValues} distinct quantized values from ${featuresSnapshot.size} features. " +
                         "This suggests feature scaling mismatch. Feature range: ${quantAnalysis.featureRange}, " +
                         "scale: $inputScale, zeroPoint: $inputZeroPoint")
             }
@@ -451,7 +455,7 @@ class TfLiteInterpreter(
             if (nonZeroCount == 0) {
                 Log.e(TAG, "❌ CRITICAL: All quantized values are ZERO! " +
                         "Data type: $inputDataType, scale: $inputScale, zeroPoint: $inputZeroPoint, " +
-                        "sample features: [${features.take(5).joinToString()}]")
+                        "sample features: [${featuresSnapshot.take(5).joinToString()}]")
             } else {
                 LogUtils.debugIfVerbose(TAG) { "✅ Quantization: $nonZeroCount/$featureDim non-zero bytes, " +
                         "dataType=$inputDataType, sample quantized: " +
@@ -466,7 +470,7 @@ class TfLiteInterpreter(
             buf.clear()
             
             for (i in 0 until featureDim) {
-                buf.putFloat(features[i])
+                buf.putFloat(featuresSnapshot[i])
             }
             // Ensure position is 0 and limit is set correctly
             buf.rewind()
@@ -488,24 +492,39 @@ class TfLiteInterpreter(
             buffer.limit(expectedSize)
         }
         
-        // DEBUG: Log bytes from right hand portion to verify they change (only in debug builds)
-        // For two-hand vectors, left hand (first 63 values) may be zeros, so we check
-        // the right hand portion where data actually changes.
-        val position = buffer.position()
+        // CRITICAL: Verify buffer was written correctly BEFORE comparison
+        // Ensure buffer is at position 0 and ready for reading
         buffer.rewind()
+        buffer.limit(expectedSize)
         
-        // Calculate right hand start byte offset
-        val rightHandStartByte = if (isInputQuantized) {
-            63 // Right hand starts at feature index 63
+        // DEBUG: Log bytes from BOTH left and right hand portions to verify they change (only in debug builds)
+        // For two-hand vectors, we need to check BOTH portions because:
+        // - When left hand is all zeros, it quantizes to a constant byte pattern (all -54)
+        // - When right hand is all zeros, it also quantizes to a constant byte pattern
+        // - We need to detect changes in EITHER portion to know the input is changing
+        val position = buffer.position()
+        
+        // Calculate hand portions for two-hand vectors (126 features):
+        // - Quantized: bytes 0-62 (left hand), bytes 63-125 (right hand)
+        // - Float: bytes 0-251 (left hand), bytes 252-503 (right hand)
+        val leftHandEndByte = if (isInputQuantized) {
+            63 // Left hand ends at feature index 62 (byte 63 is exclusive)
         } else {
             252 // 4 bytes per float * 63 features = 252 bytes
         }
         
-        // Read bytes from right hand portion (where data actually changes)
-        val bytesToCheck = minOf(20, buffer.remaining() - rightHandStartByte)
-        val rightHandBytes = if (bytesToCheck > 0 && buffer.remaining() > rightHandStartByte) {
-            buffer.position(rightHandStartByte)
-            val bytes = ByteArray(bytesToCheck)
+        val rightHandStartByte = leftHandEndByte
+        val rightHandEndByte = if (isInputQuantized) {
+            126 // Right hand ends at feature index 125 (byte 126 is exclusive)
+        } else {
+            504 // 4 bytes per float * 126 features = 504 bytes
+        }
+        
+        // Read bytes from LEFT hand portion
+        val leftBytesToCheck = minOf(20, leftHandEndByte)
+        val leftHandBytes = if (leftBytesToCheck > 0 && buffer.remaining() >= leftBytesToCheck) {
+            buffer.position(0) // Start from beginning (left hand)
+            val bytes = ByteArray(leftBytesToCheck)
             buffer.get(bytes)
             bytes
         } else {
@@ -514,20 +533,77 @@ class TfLiteInterpreter(
             ByteArray(minOf(20, buffer.remaining())).also { buffer.get(it) }
         }
         
+        // CRITICAL: Also read bytes from RIGHT hand portion to detect changes when left hand is all zeros
+        val rightBytesToCheck = if (buffer.capacity() >= rightHandEndByte) {
+            minOf(20, rightHandEndByte - rightHandStartByte)
+        } else {
+            0
+        }
+        val rightHandBytes = if (rightBytesToCheck > 0) {
+            buffer.position(rightHandStartByte)
+            val bytes = ByteArray(rightBytesToCheck)
+            buffer.get(bytes)
+            bytes
+        } else {
+            ByteArray(0)
+        }
+        
+        // Combine both portions for comparison
+        val combinedBytes = leftHandBytes + rightHandBytes
+        
+        // CRITICAL: Also log the actual float values and their quantized bytes for first 5 features
+        // This helps diagnose if quantization is collapsing values
+        val first5Floats = featuresSnapshot.slice(0 until minOf(5, featuresSnapshot.size))
+        val first5Quantized = if (isInputQuantized) {
+            first5Floats.map { quantizeFloat(it) }
+        } else {
+            null
+        }
+        
+        // Log detailed comparison (always log errors, verbose for debug)
+        if (isInputQuantized && first5Quantized != null) {
+            Log.d(TAG, "🔍 Feature-to-Byte mapping (first 5): " +
+                    first5Floats.mapIndexed { idx, f -> 
+                        "f[$idx]=$f -> byte=${first5Quantized[idx]} (0x%02x)".format(first5Quantized[idx])
+                    }.joinToString(", "))
+        } else {
+            LogUtils.debugIfVerbose(TAG) { "🔍 Feature values (first 5): ${first5Floats.joinToString()}" }
+        }
+        
         buffer.position(position)
         LogUtils.debugIfVerbose(TAG) { "📦 Input buffer: size=${buffer.capacity()}, position=${buffer.position()}, " +
-                "limit=${buffer.limit()}, rightHandBytes[${rightHandStartByte}-${rightHandStartByte + rightHandBytes.size - 1}]=[" +
+                "limit=${buffer.limit()}, leftHandBytes[0-${leftHandBytes.size - 1}]=[" +
+                "${leftHandBytes.joinToString { "%02x".format(it) }}], " +
+                "rightHandBytes[0-${rightHandBytes.size - 1}]=[" +
                 "${rightHandBytes.joinToString { "%02x".format(it) }}]" }
         
         // CRITICAL: Frame-by-frame comparison to detect unchanged buffers (always log errors)
-        // Compare right hand portion bytes where data actually changes
-        if (previousBufferBytes != null && previousBufferBytes!!.size == rightHandBytes.size) {
-            val isIdentical = rightHandBytes.contentEquals(previousBufferBytes!!)
+        // Compare BOTH left and right hand portions to detect changes even when one hand is all zeros
+        if (previousBufferBytes != null && previousBufferBytes!!.size == combinedBytes.size) {
+            val isIdentical = combinedBytes.contentEquals(previousBufferBytes!!)
             if (isIdentical) {
                 consecutiveIdenticalBuffers++
+                // CRITICAL: Log actual float values to see if they're changing but quantizing to same bytes
+                // Also check if left hand is all zeros (which would explain why left-hand bytes are identical)
+                val leftHandAllZeros = first5Floats.all { it == 0f }
+                val rightHandStart = if (featuresSnapshot.size >= 126) 63 else featuresSnapshot.size
+                val rightHandEnd = minOf(featuresSnapshot.size, 126)
+                val rightHandFloats = if (rightHandStart < rightHandEnd) {
+                    featuresSnapshot.slice(rightHandStart until rightHandEnd).take(5)
+                } else {
+                    emptyList()
+                }
+                val rightHandAllZeros = rightHandFloats.isEmpty() || rightHandFloats.all { it == 0f }
+                
                 Log.e(TAG, "❌ CRITICAL: ByteBuffer IDENTICAL to previous frame! " +
                         "Consecutive identical buffers: $consecutiveIdenticalBuffers. " +
-                        "This means the buffer is NOT being updated with new data!")
+                        "Left hand[0-4]: [${first5Floats.joinToString()}], " +
+                        "Right hand[${rightHandStart}-${minOf(rightHandStart + 4, rightHandEnd - 1)}]: [${rightHandFloats.joinToString()}], " +
+                        "Left all zeros: $leftHandAllZeros, Right all zeros: $rightHandAllZeros, " +
+                        "First 5 quantized bytes (left): [${if (first5Quantized != null) first5Quantized.joinToString() else "N/A"}], " +
+                        "Left buffer bytes: [${leftHandBytes.joinToString { "%02x".format(it) }}], " +
+                        "Right buffer bytes: [${rightHandBytes.joinToString { "%02x".format(it) }}]. " +
+                        "This suggests quantization may be collapsing values or buffer is not being updated!")
             } else {
                 if (consecutiveIdenticalBuffers > 0) {
                     LogUtils.w(TAG) { "✅ ByteBuffer changed after $consecutiveIdenticalBuffers identical frames" }
@@ -537,7 +613,7 @@ class TfLiteInterpreter(
         } else {
             consecutiveIdenticalBuffers = 0
         }
-        previousBufferBytes = rightHandBytes.copyOf()
+        previousBufferBytes = combinedBytes.copyOf()
         
         // CRITICAL: Verify ByteBuffer contains correct feature vector data
         // Read back from ByteBuffer and compare with input feature vector
@@ -547,36 +623,36 @@ class TfLiteInterpreter(
         try {
             if (isInputQuantized) {
                 // For quantized: read back quantized bytes and dequantize
-                val rightHandStartIdx = 63
-                val verifyIndices = listOf(63, 64, 65, 66, 67) // First 5 right hand features
+                // Check LEFT hand portion (indices 0-4) where data actually changes
+                val verifyIndices = listOf(0, 1, 2, 3, 4) // First 5 left hand features
                 var mismatchCount = 0
                 
                 for (idx in verifyIndices) {
                     if (idx < featureDim) {
                         buffer.position(idx)
                         val quantizedByte = buffer.get()
-                        val expectedQuantized = quantizeFloat(features[idx])
+                        val expectedQuantized = quantizeFloat(featuresSnapshot[idx])
                         if (quantizedByte != expectedQuantized) {
                             mismatchCount++
                             if (mismatchCount <= 3) { // Log first 3 mismatches
                                 Log.e(TAG, "❌ ByteBuffer verification FAILED at index $idx: " +
                                         "expected quantized=$expectedQuantized, got=$quantizedByte, " +
-                                        "original float=${features[idx]}")
+                                        "original float=${featuresSnapshot[idx]}")
                             }
                         }
                     }
                 }
                 
                 if (mismatchCount == 0) {
-                    LogUtils.debugIfVerbose(TAG) { "✅ ByteBuffer verification PASSED: right hand portion matches input" }
+                    LogUtils.debugIfVerbose(TAG) { "✅ ByteBuffer verification PASSED: left hand portion matches input" }
                 } else {
                     Log.e(TAG, "❌ CRITICAL: ByteBuffer verification FAILED: $mismatchCount/${verifyIndices.size} values mismatch! " +
                             "ByteBuffer may not contain correct feature vector data!")
                 }
             } else {
                 // For float: read back floats directly
-                val rightHandStartIdx = 63
-                val verifyIndices = listOf(63, 64, 65, 66, 67) // First 5 right hand features
+                // Check LEFT hand portion (indices 0-4) where data actually changes
+                val verifyIndices = listOf(0, 1, 2, 3, 4) // First 5 left hand features
                 var mismatchCount = 0
                 val tolerance = 0.0001f
                 
@@ -584,7 +660,7 @@ class TfLiteInterpreter(
                     if (idx < featureDim) {
                         buffer.position(idx * 4) // 4 bytes per float
                         val bufferFloat = buffer.getFloat()
-                        val expectedFloat = features[idx]
+                        val expectedFloat = featuresSnapshot[idx]
                         val diff = kotlin.math.abs(bufferFloat - expectedFloat)
                         
                         if (diff > tolerance) {
@@ -598,7 +674,7 @@ class TfLiteInterpreter(
                 }
                 
                 if (mismatchCount == 0) {
-                    LogUtils.debugIfVerbose(TAG) { "✅ ByteBuffer verification PASSED: right hand portion matches input" }
+                    LogUtils.debugIfVerbose(TAG) { "✅ ByteBuffer verification PASSED: left hand portion matches input" }
                 } else {
                     Log.e(TAG, "❌ CRITICAL: ByteBuffer verification FAILED: $mismatchCount/${verifyIndices.size} values mismatch! " +
                             "ByteBuffer may not contain correct feature vector data!")
@@ -611,13 +687,25 @@ class TfLiteInterpreter(
         }
         
         // DEBUG: Calculate input hash to verify it changes (only in debug builds)
+        // The hash now includes both left and right hand portions
         val inputHash = calculateBufferHash(buffer)
+        val rightHandStart = if (featuresSnapshot.size >= 126) 63 else featuresSnapshot.size
+        val rightHandEnd = minOf(featuresSnapshot.size, 126)
+        val rightHandFeatures = if (rightHandStart < rightHandEnd) {
+            featuresSnapshot.slice(rightHandStart until minOf(rightHandStart + 5, rightHandEnd))
+        } else {
+            emptyList()
+        }
+        
         if (inputHash != lastInputHash) {
             LogUtils.debugIfVerbose(TAG) { "✅ Input buffer changed: hash=$inputHash (was=$lastInputHash), " +
-                    "rightHandFeatures[63-67]=[${features.slice(63..67).joinToString()}]" }
+                    "leftHandFeatures[0-4]=[${featuresSnapshot.slice(0 until minOf(5, featuresSnapshot.size)).joinToString()}], " +
+                    "rightHandFeatures[${rightHandStart}-${minOf(rightHandStart + 4, rightHandEnd - 1)}]=[${rightHandFeatures.joinToString()}]" }
             lastInputHash = inputHash
         } else {
             Log.e(TAG, "❌ CRITICAL: Input buffer UNCHANGED: hash=$inputHash (same as last frame!) " +
+                    "Left hand[0-4]: [${featuresSnapshot.slice(0 until minOf(5, featuresSnapshot.size)).joinToString()}], " +
+                    "Right hand[${rightHandStart}-${minOf(rightHandStart + 4, rightHandEnd - 1)}]: [${rightHandFeatures.joinToString()}]. " +
                     "This indicates the buffer content is not changing between frames!")
         }
         
@@ -626,8 +714,8 @@ class TfLiteInterpreter(
     
     /**
      * Calculate a simple hash of buffer contents for change detection
-     * For two-hand vectors, left hand (first 63 values) may be zeros, so we check
-     * the right hand portion where data actually changes.
+     * For two-hand vectors, check BOTH left and right hand portions to detect changes
+     * even when one hand is all zeros (which quantizes to a constant byte pattern).
      */
     private fun calculateBufferHash(buffer: ByteBuffer): Int {
         val position = buffer.position()
@@ -635,30 +723,40 @@ class TfLiteInterpreter(
         
         var hash = 0
         
-        // For two-hand vectors (126 features), right hand starts at:
-        // - Quantized: byte 63 (feature index 63)
-        // - Float: byte 252 (4 bytes * 63 features)
-        val rightHandStartByte = if (isInputQuantized) {
-            63 // Right hand starts at feature index 63
+        // For two-hand vectors (126 features):
+        // - Quantized: bytes 0-62 (left hand), bytes 63-125 (right hand)
+        // - Float: bytes 0-251 (left hand), bytes 252-503 (right hand)
+        val leftHandEndByte = if (isInputQuantized) {
+            63 // Left hand ends at feature index 62 (byte 63 is exclusive)
         } else {
             252 // 4 bytes per float * 63 features = 252 bytes
         }
         
-        // Check bytes from right hand portion (where data actually changes)
-        val bytesToCheck = minOf(20, buffer.remaining() - rightHandStartByte)
+        val rightHandStartByte = leftHandEndByte
+        val rightHandEndByte = if (isInputQuantized) {
+            126 // Right hand ends at feature index 125 (byte 126 is exclusive)
+        } else {
+            504 // 4 bytes per float * 126 features = 504 bytes
+        }
         
-        if (bytesToCheck > 0 && buffer.remaining() > rightHandStartByte) {
-            // Skip to right hand portion
-            buffer.position(rightHandStartByte)
-            repeat(bytesToCheck) {
+        // Check bytes from LEFT hand portion first
+        val leftBytesToCheck = minOf(20, leftHandEndByte)
+        if (leftBytesToCheck > 0 && buffer.remaining() >= leftBytesToCheck) {
+            buffer.position(0)
+            repeat(leftBytesToCheck) {
                 hash = 31 * hash + (buffer.get().toInt() and 0xFF)
             }
-        } else {
-            // Fallback: check first 20 bytes if buffer is too small
-            buffer.rewind()
-            val fallbackBytes = minOf(20, buffer.remaining())
-            repeat(fallbackBytes) {
-                hash = 31 * hash + (buffer.get().toInt() and 0xFF)
+        }
+        
+        // CRITICAL: Also check RIGHT hand portion to detect changes when left hand is all zeros
+        // This ensures we detect changes even when the left-hand portion quantizes to a constant pattern
+        if (buffer.capacity() >= rightHandEndByte) {
+            val rightBytesToCheck = minOf(20, rightHandEndByte - rightHandStartByte)
+            if (rightBytesToCheck > 0) {
+                buffer.position(rightHandStartByte)
+                repeat(rightBytesToCheck) {
+                    hash = 31 * hash + (buffer.get().toInt() and 0xFF)
+                }
             }
         }
         
@@ -674,6 +772,9 @@ class TfLiteInterpreter(
     private fun writeToInputTensor(features: FloatArray): Boolean {
         require(interpreter != null) { "Interpreter not initialized!" }
         require(features.size == featureDim) { "Expected $featureDim features, got ${features.size}" }
+        
+        // CRITICAL: Create snapshot immediately to prevent array modification
+        val featuresSnapshot = features.copyOf()
         
         val inputTensor: Tensor = interpreter!!.getInputTensor(0)
         
@@ -697,8 +798,10 @@ class TfLiteInterpreter(
             return false
         }
         
-        // Save current position to restore later
+        // CRITICAL: Clear and reset tensor buffer before writing
         val originalPosition = tensorBuffer.position()
+        val originalLimit = tensorBuffer.limit()
+        tensorBuffer.clear()
         tensorBuffer.rewind()
         
         try {
@@ -707,21 +810,34 @@ class TfLiteInterpreter(
                 var nonZeroCount = 0
                 val sampleQuantizedValues = mutableListOf<Pair<Float, Byte>>()
                 
+                // CRITICAL: Log first 5 features and their quantized values for debugging
+                val first5Floats = featuresSnapshot.slice(0 until minOf(5, featuresSnapshot.size))
+                val first5Quantized = first5Floats.map { quantizeFloat(it) }
+                Log.d(TAG, "🔍 Tensor buffer write (first 5): " +
+                        first5Floats.mapIndexed { idx, f -> 
+                            "f[$idx]=$f -> byte=${first5Quantized[idx]}"
+                        }.joinToString(", "))
+                
                 for (i in 0 until featureDim) {
-                    val quantized = quantizeFloat(features[i])
+                    val quantized = quantizeFloat(featuresSnapshot[i])
                     tensorBuffer.put(quantized)
                     if (quantized != 0.toByte()) {
                         nonZeroCount++
                         if (sampleQuantizedValues.size < 5) {
-                            sampleQuantizedValues.add(features[i] to quantized)
+                            sampleQuantizedValues.add(featuresSnapshot[i] to quantized)
                         }
                     }
                 }
                 
+                // CRITICAL: Ensure buffer is at correct position and limit for reading
+                tensorBuffer.rewind()
+                tensorBuffer.limit(featureDim)
+                
                 // Log quantization results (errors always logged)
                 if (nonZeroCount == 0) {
                     Log.e(TAG, "❌ CRITICAL: All quantized values are ZERO in tensor buffer! " +
-                            "Data type: $inputDataType, scale: $inputScale, zeroPoint: $inputZeroPoint")
+                            "Data type: $inputDataType, scale: $inputScale, zeroPoint: $inputZeroPoint, " +
+                            "first 5 floats: [${first5Floats.joinToString()}]")
                 } else {
                     LogUtils.debugIfVerbose(TAG) { "Tensor buffer quantization: $nonZeroCount/$featureDim non-zero bytes, " +
                             "dataType=$inputDataType, sample: " +
@@ -729,50 +845,103 @@ class TfLiteInterpreter(
                 }
                 
                 // Log first 10 bytes from tensor buffer for verification (only in debug builds)
-                val position = tensorBuffer.position()
+                val readPosition = tensorBuffer.position()
                 tensorBuffer.rewind()
                 val firstBytes = ByteArray(minOf(10, tensorBuffer.remaining()))
                 tensorBuffer.get(firstBytes)
-                tensorBuffer.position(position)
+                tensorBuffer.position(readPosition)
                 LogUtils.debugIfVerbose(TAG) { "Tensor buffer written: first10bytes=[${firstBytes.joinToString(separator = ", ", transform = { "%02x".format(it) })}]" }
                 
             } else {
                 // For float inputs, write floats directly
                 for (i in 0 until featureDim) {
-                    tensorBuffer.putFloat(features[i])
+                    tensorBuffer.putFloat(featuresSnapshot[i])
                 }
                 
+                // CRITICAL: Ensure buffer is at correct position and limit for reading
+                tensorBuffer.rewind()
+                tensorBuffer.limit(4 * featureDim)
+                
                 // Log first 3 values from tensor buffer for verification (only in debug builds)
-                val position = tensorBuffer.position()
+                val readPosition = tensorBuffer.position()
                 tensorBuffer.rewind()
                 val firstValues = FloatArray(minOf(3, featureDim))
                 for (idx in firstValues.indices) {
                     firstValues[idx] = tensorBuffer.getFloat()
                 }
-                tensorBuffer.position(position)
+                tensorBuffer.position(readPosition)
                 LogUtils.debugIfVerbose(TAG) { "Tensor buffer written: first3values=[${firstValues.joinToString()}]" }
             }
             
             // Calculate hash of tensor buffer contents for change detection
+            // Check BOTH left and right hand portions to detect changes even when one hand is all zeros
+            val hashPosition = tensorBuffer.position()
             tensorBuffer.rewind()
             var tensorHash = 0
-            val bytesToCheck = minOf(20, tensorBuffer.remaining())
-            repeat(bytesToCheck) {
-                tensorHash = 31 * tensorHash + (tensorBuffer.get().toInt() and 0xFF)
+            
+            // For two-hand vectors (126 features):
+            // - Quantized: bytes 0-62 (left hand), bytes 63-125 (right hand)
+            // - Float: bytes 0-251 (left hand), bytes 252-503 (right hand)
+            val leftHandEndByte = if (isInputQuantized) {
+                63 // Left hand ends at feature index 62 (byte 63 is exclusive)
+            } else {
+                252 // 4 bytes per float * 63 features = 252 bytes
+            }
+            
+            val rightHandStartByte = leftHandEndByte
+            val rightHandEndByte = if (isInputQuantized) {
+                126 // Right hand ends at feature index 125 (byte 126 is exclusive)
+            } else {
+                504 // 4 bytes per float * 126 features = 504 bytes
+            }
+            
+            // Check bytes from LEFT hand portion first
+            val leftBytesToCheck = minOf(20, leftHandEndByte)
+            if (leftBytesToCheck > 0 && tensorBuffer.remaining() >= leftBytesToCheck) {
+                tensorBuffer.position(0)
+                repeat(leftBytesToCheck) {
+                    tensorHash = 31 * tensorHash + (tensorBuffer.get().toInt() and 0xFF)
+                }
+            }
+            
+            // CRITICAL: Also check RIGHT hand portion to detect changes when left hand is all zeros
+            if (tensorBuffer.capacity() >= rightHandEndByte) {
+                val rightBytesToCheck = minOf(20, rightHandEndByte - rightHandStartByte)
+                if (rightBytesToCheck > 0) {
+                    tensorBuffer.position(rightHandStartByte)
+                    repeat(rightBytesToCheck) {
+                        tensorHash = 31 * tensorHash + (tensorBuffer.get().toInt() and 0xFF)
+                    }
+                }
+            }
+            
+            tensorBuffer.position(hashPosition)
+            
+            val rightHandStart = if (featuresSnapshot.size >= 126) 63 else featuresSnapshot.size
+            val rightHandEnd = minOf(featuresSnapshot.size, 126)
+            val rightHandFeatures = if (rightHandStart < rightHandEnd) {
+                featuresSnapshot.slice(rightHandStart until minOf(rightHandStart + 5, rightHandEnd))
+            } else {
+                emptyList()
             }
             
             if (tensorHash != lastInputHash) {
-                LogUtils.debugIfVerbose(TAG) { "✅ Tensor buffer changed: hash=$tensorHash (was=$lastInputHash)" }
+                LogUtils.debugIfVerbose(TAG) { "✅ Tensor buffer changed: hash=$tensorHash (was=$lastInputHash), " +
+                        "leftHandFeatures[0-4]=[${featuresSnapshot.slice(0 until minOf(5, featuresSnapshot.size)).joinToString()}], " +
+                        "rightHandFeatures[${rightHandStart}-${minOf(rightHandStart + 4, rightHandEnd - 1)}]=[${rightHandFeatures.joinToString()}]" }
                 lastInputHash = tensorHash
             } else {
-                LogUtils.w(TAG) { "⚠️ Tensor buffer UNCHANGED: hash=$tensorHash (same as last frame!)" }
+                Log.e(TAG, "❌ CRITICAL: Tensor buffer UNCHANGED: hash=$tensorHash (same as last frame!) " +
+                        "Left hand[0-4]: [${featuresSnapshot.slice(0 until minOf(5, featuresSnapshot.size)).joinToString()}], " +
+                        "Right hand[${rightHandStart}-${minOf(rightHandStart + 4, rightHandEnd - 1)}]: [${rightHandFeatures.joinToString()}]")
             }
             
             return true
             
         } finally {
-            // Restore original position
+            // Restore original position and limit
             tensorBuffer.position(originalPosition)
+            tensorBuffer.limit(originalLimit)
         }
     }
 
@@ -787,6 +956,10 @@ class TfLiteInterpreter(
     fun runMultiOutput(features: FloatArray): MultiOutputResult {
         require(features.size == featureDim) { "Expected $featureDim features, got ${features.size}" }
         
+        // CRITICAL: Copy feature vector immediately to prevent array reuse/modification
+        // The array might be getting reused elsewhere, so we need a snapshot
+        val featuresSnapshot = features.copyOf()
+        
         inferenceCallCount++
         
         // Validate input tensor (only log errors in release, full logs in debug)
@@ -799,9 +972,21 @@ class TfLiteInterpreter(
                     "dataType=$tensorDataType, expectedFeatures=$featureDim" }
             
             // Verify tensor shape matches expected (always log errors)
-            if (tensorShape.size == 2 && tensorShape[1] != featureDim) {
-                Log.e(TAG, "❌ CRITICAL: Input tensor shape mismatch! " +
-                        "Expected [1, $featureDim], got ${tensorShape.contentToString()}")
+            // Model expects shape [1, 126] - batch dimension is handled automatically by TFLite
+            if (tensorShape.size == 2) {
+                val batchSize = tensorShape[0]
+                val featureSize = tensorShape[1]
+                if (featureSize != featureDim) {
+                    Log.e(TAG, "❌ CRITICAL: Input tensor feature dimension mismatch! " +
+                            "Expected [?, $featureDim], got ${tensorShape.contentToString()}")
+                } else if (batchSize != 1) {
+                    Log.w(TAG, "⚠️ Input tensor batch size is $batchSize, expected 1. " +
+                            "TFLite will handle this automatically, but verify model expects batch=1.")
+                } else {
+                    LogUtils.debugIfVerbose(TAG) { "✅ Input tensor shape validated: $tensorShape (batch=$batchSize, features=$featureSize)" }
+                }
+            } else {
+                Log.w(TAG, "⚠️ Unexpected input tensor shape: ${tensorShape.contentToString()} (expected 2D: [batch, features])")
             }
         } catch (e: Exception) {
             Log.e(TAG, "❌ Error validating input tensor: ${e.message}", e)
@@ -810,7 +995,7 @@ class TfLiteInterpreter(
         // CRITICAL: Create ByteBuffer with fresh data FIRST
         // This ensures we have a properly formatted buffer with current frame's data
         // IMPORTANT: createInputBuffer() always creates a NEW buffer, never reuses old ones
-        val inputBuffer = createInputBuffer(features)
+        val inputBuffer = createInputBuffer(featuresSnapshot)
         
         // CRITICAL: Calculate expected size first (used in multiple places)
         val expectedSize = if (isInputQuantized) featureDim else (4 * featureDim)
@@ -818,7 +1003,7 @@ class TfLiteInterpreter(
         // CRITICAL: Try to write directly to input tensor buffer as well
         // This ensures the data is actually in the tensor before inference
         // If this fails, we'll rely on the ByteBuffer being passed to interpreter.run()
-        val tensorBufferWritten = writeToInputTensor(features)
+        val tensorBufferWritten = writeToInputTensor(featuresSnapshot)
         
         // CRITICAL: If tensor buffer write failed, try to explicitly copy ByteBuffer to input tensor
         // This ensures the interpreter uses the fresh data from ByteBuffer
@@ -884,39 +1069,41 @@ class TfLiteInterpreter(
             inputBuffer.limit(inputBuffer.position() + expectedSize)
         }
         
-        // CRITICAL: Verify ByteBuffer contains expected data from right hand portion (only in debug builds)
-        // Check right hand portion where data actually changes
+        // CRITICAL: Verify ByteBuffer contains expected data from LEFT hand portion (only in debug builds)
+        // Check LEFT hand portion where data actually changes
         val verifyPosition = inputBuffer.position()
-        val rightHandStartByte = if (isInputQuantized) {
-            63 // Right hand starts at feature index 63
+        val leftHandEndByte = if (isInputQuantized) {
+            63 // Left hand ends at feature index 62 (byte 63 is exclusive)
         } else {
             252 // 4 bytes per float * 63 features = 252 bytes
         }
         
         inputBuffer.rewind()
         if (isInputQuantized) {
-            // Check right hand portion bytes
-            if (inputBuffer.remaining() > rightHandStartByte) {
-                inputBuffer.position(rightHandStartByte)
-                val verifyBytes = ByteArray(minOf(10, inputBuffer.remaining()))
+            // Check LEFT hand portion bytes (indices 0-9)
+            val bytesToCheck = minOf(10, leftHandEndByte)
+            if (inputBuffer.remaining() >= bytesToCheck) {
+                inputBuffer.position(0) // Start from beginning (left hand)
+                val verifyBytes = ByteArray(bytesToCheck)
                 inputBuffer.get(verifyBytes)
                 val nonZeroVerify = verifyBytes.count { it != 0.toByte() }
-                LogUtils.debugIfVerbose(TAG) { "ByteBuffer verification (right hand): bytes[${rightHandStartByte}-${rightHandStartByte + verifyBytes.size - 1}]=[" +
+                LogUtils.debugIfVerbose(TAG) { "ByteBuffer verification (left hand): bytes[0-${verifyBytes.size - 1}]=[" +
                         "${verifyBytes.joinToString(separator = ", ", transform = { "%02x".format(it) })}], " +
                         "nonZero=$nonZeroVerify/${verifyBytes.size}" }
                 if (nonZeroVerify == 0) {
-                    Log.e(TAG, "❌ CRITICAL: ByteBuffer right hand portion bytes are ALL ZERO! Input data may not be written correctly!")
+                    Log.e(TAG, "❌ CRITICAL: ByteBuffer left hand portion bytes are ALL ZERO! Input data may not be written correctly!")
                 }
             }
         } else {
-            // Check right hand portion floats (indices 63-67)
-            if (inputBuffer.remaining() > rightHandStartByte) {
-                inputBuffer.position(rightHandStartByte)
-                val verifyValues = FloatArray(minOf(5, (inputBuffer.remaining() / 4).toInt()))
+            // Check LEFT hand portion floats (indices 0-4)
+            val floatsToCheck = minOf(5, (leftHandEndByte / 4).toInt())
+            if (inputBuffer.remaining() >= floatsToCheck * 4) {
+                inputBuffer.position(0) // Start from beginning (left hand)
+                val verifyValues = FloatArray(floatsToCheck)
                 for (idx in verifyValues.indices) {
                     verifyValues[idx] = inputBuffer.getFloat()
                 }
-                LogUtils.debugIfVerbose(TAG) { "ByteBuffer verification (right hand): floats[63-${63 + verifyValues.size - 1}]=[${verifyValues.joinToString()}]" }
+                LogUtils.debugIfVerbose(TAG) { "ByteBuffer verification (left hand): floats[0-${verifyValues.size - 1}]=[${verifyValues.joinToString()}]" }
             }
         }
         inputBuffer.position(verifyPosition)

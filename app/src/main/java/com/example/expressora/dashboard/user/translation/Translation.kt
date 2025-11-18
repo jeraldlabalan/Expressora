@@ -55,6 +55,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -80,6 +81,7 @@ import com.example.expressora.recognition.mediapipe.HandLandmarkerEngine
 import com.example.expressora.recognition.pipeline.HandToFeaturesBridge
 import com.example.expressora.recognition.pipeline.RecognitionViewModel
 import com.example.expressora.recognition.config.PerformanceConfig
+import com.example.expressora.recognition.roi.MediaPipePalmRoiDetector
 import com.example.expressora.recognition.view.HandLandmarkOverlay
 import com.example.expressora.ui.theme.InterFontFamily
 import kotlinx.coroutines.delay
@@ -134,6 +136,12 @@ class TranslationActivity : ComponentActivity(), TextToSpeech.OnInitListener {
     private var handEngineInitializing = false
     private val _handEngineInitializationState = MutableSharedFlow<Boolean>(replay = 1)
     val handEngineInitializationState = _handEngineInitializationState.asSharedFlow()
+    
+    // ROI detector for performance optimization
+    @Volatile
+    private var roiDetector: MediaPipePalmRoiDetector? = null
+    @Volatile
+    private var cameraAnalyzer: CameraBitmapAnalyzer? = null
 
     private val requestPermissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { isGranted ->
@@ -183,6 +191,31 @@ class TranslationActivity : ComponentActivity(), TextToSpeech.OnInitListener {
             // Log diagnostics once
             RecognitionProvider.logDiagnostics(this)
             
+            // Initialize ROI detector if enabled
+            if (PerformanceConfig.ROI_ENABLED) {
+                try {
+                    roiDetector = MediaPipePalmRoiDetector(
+                        context = this,
+                        paddingMultiplier = PerformanceConfig.ROI_PADDING_MULTIPLIER,
+                        minConfidence = PerformanceConfig.ROI_MIN_CONFIDENCE,
+                        detectionCadence = PerformanceConfig.ROI_DETECTION_CADENCE,
+                        cacheFrames = PerformanceConfig.ROI_CACHE_FRAMES
+                    )
+                    Log.i(TAG, "ROI detector initialized successfully")
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to initialize ROI detector, continuing without ROI", e)
+                    roiDetector = null
+                }
+            }
+            
+            // Initialize FeatureScaler (required for retrained model)
+            try {
+                HandToFeaturesBridge.initializeScaler(this@TranslationActivity)
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to initialize FeatureScaler, continuing without feature scaling", e)
+                // App will continue to work, but model predictions may be incorrect
+            }
+            
             // Initialize HandLandmarkerEngine on background thread
             handEngineInitializing = true
             lifecycleScope.launch(Dispatchers.IO) {
@@ -195,8 +228,21 @@ class TranslationActivity : ComponentActivity(), TextToSpeech.OnInitListener {
                                 overlay.post { overlay.setHandLandmarks(result, 640, 480) }
                             }
 
-                            // Continue with recognition
-                            val hands = HandToFeaturesBridge.extract(result)
+                            // Get ROI info for coordinate mapping
+                            val analyzer = cameraAnalyzer
+                            val roiOffset = analyzer?.getCurrentRoiOffset()
+                            val (fullWidth, fullHeight) = analyzer?.getFullImageDimensions() ?: Pair(0, 0)
+                            val (croppedWidth, croppedHeight) = analyzer?.getProcessedBitmapDimensions() ?: Pair(0, 0)
+
+                            // Continue with recognition (with ROI coordinate mapping if applicable)
+                            val hands = HandToFeaturesBridge.extract(
+                                result = result,
+                                roiOffset = roiOffset,
+                                croppedWidth = croppedWidth,
+                                croppedHeight = croppedHeight,
+                                fullWidth = fullWidth,
+                                fullHeight = fullHeight
+                            )
                             if (hands.left != null || hands.right != null) {
                                 Log.d(HAND_TAG, "Detected ${listOfNotNull(hands.left, hands.right).size} hand(s)")
                             }
@@ -262,6 +308,19 @@ class TranslationActivity : ComponentActivity(), TextToSpeech.OnInitListener {
             val lastBusEvent by recognitionViewModel.lastBusEvent.collectAsState()
             var hasCameraPermission by remember { mutableStateOf(cameraPermissionGranted) }
 
+            // DEBUG: Log when UI receives recognition result updates
+            LaunchedEffect(recognitionResult) {
+                val result = recognitionResult // Store in local variable to allow smart cast
+                if (result != null) {
+                    Log.d(TAG, "🖥️ UI RECEIVED recognition result update: label='${result.glossLabel}', " +
+                            "conf=${result.glossConf} (${(result.glossConf * 100).toInt()}%), " +
+                            "timestamp=${result.timestamp}, " +
+                            "top3=[${result.debugInfo?.softmaxProbs?.take(3)?.joinToString { "${it.label}=${(it.value * 100).toInt()}%" }}]")
+                } else {
+                    Log.d(TAG, "🖥️ UI recognition result is null")
+                }
+            }
+
             LaunchedEffect(Unit) {
                 cameraPermissionFlow.collectLatest { granted ->
                     hasCameraPermission = granted
@@ -284,7 +343,8 @@ class TranslationActivity : ComponentActivity(), TextToSpeech.OnInitListener {
             
             // Lite Mode toggle state
             var liteModeEnabled by remember { mutableStateOf(PerformanceConfig.LITE_MODE_ENABLED) }
-            val analyzer = remember(hasCameraPermission) {
+            val analyzer = remember(hasCameraPermission, roiDetector) {
+                val detector = roiDetector
                 CameraBitmapAnalyzer(
                     onBitmap = { bitmap ->
                         try {
@@ -297,8 +357,12 @@ class TranslationActivity : ComponentActivity(), TextToSpeech.OnInitListener {
                             bitmap.recycle()
                         }
                     },
-                    frameSkip = 2
-                )
+                    frameSkip = 2,
+                    roiDetector = detector
+                ).also {
+                    // Store reference for ROI coordinate mapping
+                    cameraAnalyzer = it
+                }
             }
             TranslationScreen(
                 glossEvent = glossEvent,
@@ -375,6 +439,11 @@ class TranslationActivity : ComponentActivity(), TextToSpeech.OnInitListener {
     }
 
     override fun onDestroy() {
+        // Cleanup ROI detector
+        roiDetector?.close()
+        roiDetector = null
+        cameraAnalyzer = null
+        
         super.onDestroy()
         
         // Cleanup recognition engine
@@ -666,8 +735,9 @@ fun TranslationScreen(
                     
                     Spacer(modifier = Modifier.height(8.dp))
                     
-                    // Current detection
+                    // Current detection - use timestamp as key to force recomposition
                     if (recognitionResult != null) {
+                        key(recognitionResult.timestamp) { // Force recomposition on timestamp change
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Text(
                                 text = recognitionResult.glossLabel,
@@ -700,6 +770,7 @@ fun TranslationScreen(
                                 fontFamily = InterFontFamily
                             )
                         }
+                        } // End key block
                     } else {
                         Text(
                             text = "👋 Show your hand",

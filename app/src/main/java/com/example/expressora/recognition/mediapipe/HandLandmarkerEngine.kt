@@ -3,6 +3,7 @@ package com.example.expressora.recognition.mediapipe
 import android.content.Context
 import android.graphics.Bitmap
 import android.os.Build
+import android.os.Process
 import android.os.SystemClock
 import android.util.Log
 import com.example.expressora.recognition.config.PerformanceConfig
@@ -75,12 +76,15 @@ class HandLandmarkerEngine(
         delegateUsed = delegateType
         runningMode = selectRunningMode()
 
+        // Build base options - MediaPipe will automatically select GPU if available
+        // We've already checked GPU support in selectDelegate(), so MediaPipe's auto-selection
+        // will align with our preference. Explicit delegate setting is not available in this API version.
         val baseOptions = BaseOptions.builder()
             .setModelAssetPath(MODEL_ASSET_PATH)
             .build()
         val optionsBuilder = HandLandmarker.HandLandmarkerOptions.builder()
             .setBaseOptions(baseOptions)
-            .setNumHands(maxHands)
+            .setNumHands(if (PerformanceConfig.SINGLE_HAND_MODE) 1 else maxHands)
             .setMinHandDetectionConfidence(PerformanceConfig.HAND_DETECTION_CONFIDENCE)
             .setMinHandPresenceConfidence(PerformanceConfig.HAND_PRESENCE_CONFIDENCE)
             .setMinTrackingConfidence(PerformanceConfig.HAND_TRACKING_CONFIDENCE)
@@ -114,6 +118,9 @@ class HandLandmarkerEngine(
 
     fun detectAsync(frame: Bitmap, timestampMs: Long = SystemClock.uptimeMillis()) {
         try {
+            // Set background thread priority for better performance on low-end devices
+            Process.setThreadPriority(Process.THREAD_PRIORITY_BACKGROUND)
+            
             framesProcessed.incrementAndGet()
             frameCounter++
             

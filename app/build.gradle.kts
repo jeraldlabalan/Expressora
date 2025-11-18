@@ -1,6 +1,9 @@
 import java.net.URL
 import java.net.URI
 import java.time.Instant
+import java.time.LocalDateTime
+import java.time.format.DateTimeFormatter
+import java.util.concurrent.TimeUnit
 import org.gradle.api.DefaultTask
 import org.gradle.api.file.RegularFileProperty
 import org.gradle.api.provider.Property
@@ -510,5 +513,140 @@ tasks.named("preBuild").configure {
     dependsOn("downloadHandLandmarker")
     dependsOn("generateLabelsJson")
     dependsOn("copyUnifiedRecognitionArtifacts")
+}
+
+// === Automatic Logcat Capture ===
+private fun findAdbExecutable(): String? {
+    // First check if adb is in PATH
+    if (isCommandAvailable("adb")) {
+        return "adb"
+    }
+    
+    // Try to find adb in Android SDK (common locations)
+    val androidHome = System.getenv("ANDROID_HOME") ?: System.getenv("ANDROID_SDK_ROOT")
+    if (androidHome != null) {
+        val adbPath = File(androidHome, "platform-tools/adb${if (System.getProperty("os.name").contains("Windows", ignoreCase = true)) ".exe" else ""}")
+        if (adbPath.exists() && adbPath.canExecute()) {
+            return adbPath.absolutePath
+        }
+    }
+    
+    // Try common SDK locations
+    val homeDir = System.getProperty("user.home")
+    val commonSdkPaths = listOf(
+        File(homeDir, "AppData/Local/Android/Sdk/platform-tools/adb.exe"), // Windows
+        File(homeDir, "Library/Android/sdk/platform-tools/adb"), // macOS
+        File(homeDir, "Android/Sdk/platform-tools/adb"), // Linux/Unix
+    )
+    
+    for (adbPath in commonSdkPaths) {
+        if (adbPath.exists() && adbPath.canExecute()) {
+            return adbPath.absolutePath
+        }
+    }
+    
+    return null
+}
+
+abstract class LogcatCaptureTask : DefaultTask() {
+    @TaskAction
+    fun run() {
+        val adbPath = findAdbExecutable()
+        if (adbPath == null) {
+            logger.warn("adb not found in PATH or Android SDK. Logcat capture skipped.")
+            logger.warn("Please ensure adb is available or set ANDROID_HOME/ANDROID_SDK_ROOT environment variable.")
+            return
+        }
+        
+        // Create logs directory in project root
+        val logsDir = File(rootProject.projectDir, "logs")
+        logsDir.mkdirs()
+        
+        // Generate timestamped filename
+        val timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd_HH-mm-ss"))
+        val logFile = File(logsDir, "logcat_$timestamp.txt")
+        
+        // Check if device is connected
+        try {
+            val checkDeviceProcess = ProcessBuilder(adbPath, "devices")
+                .redirectErrorStream(true)
+                .start()
+            
+            val deviceOutput = checkDeviceProcess.inputStream.bufferedReader().readText()
+            checkDeviceProcess.waitFor()
+            
+            if (!deviceOutput.contains("device") || deviceOutput.trim().lines().count { it.endsWith("device") } == 0) {
+                logger.warn("No Android device connected. Logcat capture skipped.")
+                logger.info("Connect a device and run the app again to capture logs.")
+                return
+            }
+        } catch (e: Exception) {
+            logger.warn("Failed to check for connected devices: ${e.message}")
+            logger.warn("Logcat capture skipped.")
+            return
+        }
+        
+        // Start logcat capture in background
+        try {
+            val isWindows = System.getProperty("os.name").contains("Windows", ignoreCase = true)
+            
+            if (isWindows) {
+                // On Windows, use PowerShell Start-Process to run in background
+                val psCommand = """
+                    Start-Process -FilePath "$adbPath" -ArgumentList @('logcat','-v','time','*:V') -RedirectStandardOutput "$logFile" -RedirectStandardError "$logFile" -WindowStyle Hidden -NoNewWindow
+                """.trimIndent()
+                
+                val process = ProcessBuilder("powershell.exe", "-Command", psCommand)
+                    .start()
+                
+                // Don't wait for the process - it runs in background
+                process.waitFor(100, TimeUnit.MILLISECONDS)
+            } else {
+                // On Unix/Linux/macOS, use nohup to run in background
+                val processBuilder = ProcessBuilder("nohup", adbPath, "logcat", "-v", "time", "*:V")
+                    .redirectOutput(ProcessBuilder.Redirect.appendTo(logFile))
+                    .redirectError(ProcessBuilder.Redirect.appendTo(logFile))
+                
+                val process = processBuilder.start()
+                
+                // Don't wait for the process - it runs in background
+                process.waitFor(100, TimeUnit.MILLISECONDS)
+            }
+            
+            logger.lifecycle("Logcat capture started: ${logFile.relativeToOrSelf(rootProject.projectDir)}")
+            logger.info("Logs are being written to: ${logFile.absolutePath}")
+            logger.info("Note: Logcat capture runs in the background. Stop it manually if needed.")
+        } catch (e: Exception) {
+            logger.error("Failed to start logcat capture: ${e.message}", e)
+        }
+    }
+}
+
+tasks.register<LogcatCaptureTask>("startLogcatCapture") {
+    group = "android"
+    description = "Starts capturing logcat logs to a timestamped file in logs/ directory"
+}
+
+// Hook logcat capture to run after install tasks
+// Use afterEvaluate to ensure Android plugin tasks are registered first
+afterEvaluate {
+    // Try to hook into installDebug task (may not exist in all AGP versions)
+    tasks.findByName("installDebug")?.let {
+        it.finalizedBy("startLogcatCapture")
+    }
+    
+    // Try to hook into installRelease task
+    tasks.findByName("installRelease")?.let {
+        it.finalizedBy("startLogcatCapture")
+    }
+    
+    // Also hook into variant-specific install tasks (for newer AGP versions)
+    tasks.matching { it.name.startsWith("install") && it.name.contains("Debug", ignoreCase = true) }.configureEach {
+        finalizedBy("startLogcatCapture")
+    }
+    
+    tasks.matching { it.name.startsWith("install") && it.name.contains("Release", ignoreCase = true) }.configureEach {
+        finalizedBy("startLogcatCapture")
+    }
 }
 

@@ -12,6 +12,7 @@ import java.util.concurrent.atomic.AtomicReference
 object PerformanceConfig {
 
     enum class Mode {
+        ULTRA_LITE,
         LITE,
         BALANCED,
         ACCURACY
@@ -49,7 +50,8 @@ object PerformanceConfig {
         val enableMotionDetection: Boolean,
         val motionThreshold: Float,
         val skipFramesWhenStill: Int,
-        val skipInferenceNoHands: Boolean
+        val skipInferenceNoHands: Boolean,
+        val singleHandMode: Boolean = false
     )
 
     data class FaceSettings(
@@ -99,6 +101,14 @@ object PerformanceConfig {
         val enableGcHints: Boolean
     )
 
+    data class RoiSettings(
+        val enabled: Boolean,
+        val detectionCadence: Int,
+        val cacheFrames: Int,
+        val paddingMultiplier: Float,
+        val minConfidence: Float
+    )
+
     data class Preset(
         val label: String,
         val camera: CameraSettings,
@@ -109,10 +119,91 @@ object PerformanceConfig {
         val recognition: RecognitionSettings,
         val adaptive: AdaptiveSettings,
         val diagnostics: DiagnosticsSettings,
-        val memory: MemorySettings
+        val memory: MemorySettings,
+        val roi: RoiSettings
     )
 
     private val presets: Map<Mode, Preset> = mapOf(
+        Mode.ULTRA_LITE to Preset(
+            label = "Ultra Lite",
+            camera = CameraSettings(width = 320, height = 240, keepOnlyLatest = true),
+            frame = FrameProcessingSettings(
+                baseFrameSkip = 5,
+                targetFps = 12,
+                adaptiveSkipEnabled = true,
+                adaptiveSkipUpdateInterval = 60,
+                minFrameSkip = 3,
+                maxFrameSkip = 8,
+                jpegQuality = 65,
+                enableDownscaling = false,
+                downscaleWidth = 160,
+                downscaleHeight = 120,
+                enableOpencvPreprocessing = false
+            ),
+            mediaPipe = MediaPipeSettings(
+                numHands = 1,
+                handDetectionConfidence = 0.70f,
+                handPresenceConfidence = 0.70f,
+                handTrackingConfidence = 0.70f,
+                minHandConfidenceFilter = 0.75f,
+                handDetectionCadence = 12,
+                handSmoothingWindow = 2,
+                trackingDriftThreshold = 6,
+                enableMotionDetection = true,
+                motionThreshold = 0.03f,
+                skipFramesWhenStill = 8,
+                skipInferenceNoHands = true,
+                singleHandMode = true
+            ),
+            face = FaceSettings(
+                defaultCadenceFrames = 12,
+                cadenceRange = 10..15,
+                handAbsentCooldownFrames = 120,
+                optionalBlendshapes = listOf(),
+                enableBlendshapesWhenAboveTargetFps = false
+            ),
+            tflite = TfliteSettings(
+                interpreterThreads = 1,
+                enableGpu = true,
+                enableNnapi = true,
+                enableXnnpack = true,
+                delegateProbeOrder = listOf("GPU", "NNAPI", "CPU")
+            ),
+            recognition = RecognitionSettings(
+                rollingBufferSize = 2,
+                minStableFrames = 1,
+                debounceFrames = 3,
+                confidenceThreshold = 0.75f,
+                enableResultCaching = false,
+                cacheDurationMs = 100L
+            ),
+            adaptive = AdaptiveSettings(
+                targetFps = 12,
+                hysteresisPercent = 0.3f,
+                evaluationWindowFrames = 48,
+                detectCadenceRange = 10..15,
+                faceCadenceRange = 10..18,
+                frameSkipRange = 3..8
+            ),
+            diagnostics = DiagnosticsSettings(
+                verboseLogging = false,
+                logFpsIntervalMs = 6000L,
+                logFrameProcessing = false,
+                maxOverlayFps = 10
+            ),
+            memory = MemorySettings(
+                enableBitmapPooling = true,
+                bitmapPoolSize = 2,
+                enableGcHints = true
+            ),
+            roi = RoiSettings(
+                enabled = true,
+                detectionCadence = 15,
+                cacheFrames = 10,
+                paddingMultiplier = 2.0f,
+                minConfidence = 0.5f
+            )
+        ),
         Mode.LITE to Preset(
             label = "Lite",
             camera = CameraSettings(width = 480, height = 360, keepOnlyLatest = true),
@@ -141,7 +232,8 @@ object PerformanceConfig {
                 enableMotionDetection = true,
                 motionThreshold = 0.025f,
                 skipFramesWhenStill = 6,
-                skipInferenceNoHands = true
+                skipInferenceNoHands = true,
+                singleHandMode = false
             ),
             face = FaceSettings(
                 defaultCadenceFrames = 8,
@@ -183,6 +275,13 @@ object PerformanceConfig {
                 enableBitmapPooling = true,
                 bitmapPoolSize = 3,
                 enableGcHints = true
+            ),
+            roi = RoiSettings(
+                enabled = true,
+                detectionCadence = 12,
+                cacheFrames = 8,
+                paddingMultiplier = 2.0f,
+                minConfidence = 0.5f
             )
         ),
         Mode.BALANCED to Preset(
@@ -212,7 +311,8 @@ object PerformanceConfig {
                 enableMotionDetection = true,
                 motionThreshold = 0.02f,
                 skipFramesWhenStill = 5,
-                skipInferenceNoHands = true
+                skipInferenceNoHands = true,
+                singleHandMode = false
             ),
             face = FaceSettings(
                 defaultCadenceFrames = 5,
@@ -254,6 +354,13 @@ object PerformanceConfig {
                 enableBitmapPooling = true,
                 bitmapPoolSize = 3,
                 enableGcHints = true
+            ),
+            roi = RoiSettings(
+                enabled = true,
+                detectionCadence = 10,
+                cacheFrames = 6,
+                paddingMultiplier = 2.0f,
+                minConfidence = 0.5f
             )
         ),
         Mode.ACCURACY to Preset(
@@ -284,7 +391,8 @@ object PerformanceConfig {
                 enableMotionDetection = true,
                 motionThreshold = 0.015f,
                 skipFramesWhenStill = 4,
-                skipInferenceNoHands = true
+                skipInferenceNoHands = true,
+                singleHandMode = false
             ),
             face = FaceSettings(
                 defaultCadenceFrames = 4,
@@ -326,6 +434,13 @@ object PerformanceConfig {
                 enableBitmapPooling = true,
                 bitmapPoolSize = 3,
                 enableGcHints = true
+            ),
+            roi = RoiSettings(
+                enabled = false,
+                detectionCadence = 8,
+                cacheFrames = 5,
+                paddingMultiplier = 2.0f,
+                minConfidence = 0.5f
             )
         )
     )
@@ -399,6 +514,9 @@ object PerformanceConfig {
     val memory: MemorySettings
         get() = currentPreset.memory
 
+    val roi: RoiSettings
+        get() = currentPreset.roi
+
     // Bridged constants for legacy call sites -------------------------------
     val NUM_HANDS: Int
         get() = mediaPipe.numHands
@@ -435,6 +553,9 @@ object PerformanceConfig {
 
     val SKIP_INFERENCE_NO_HANDS: Boolean
         get() = mediaPipe.skipInferenceNoHands
+
+    val SINGLE_HAND_MODE: Boolean
+        get() = mediaPipe.singleHandMode
 
     val CAMERA_WIDTH: Int
         get() = camera.width
@@ -546,4 +667,19 @@ object PerformanceConfig {
 
     val FACE_ENABLE_BLENDSHAPES_WHEN_FAST: Boolean
         get() = face.enableBlendshapesWhenAboveTargetFps
+
+    val ROI_ENABLED: Boolean
+        get() = roi.enabled
+
+    val ROI_DETECTION_CADENCE: Int
+        get() = roi.detectionCadence
+
+    val ROI_CACHE_FRAMES: Int
+        get() = roi.cacheFrames
+
+    val ROI_PADDING_MULTIPLIER: Float
+        get() = roi.paddingMultiplier
+
+    val ROI_MIN_CONFIDENCE: Float
+        get() = roi.minConfidence
 }
