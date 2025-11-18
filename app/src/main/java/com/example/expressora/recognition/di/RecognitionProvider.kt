@@ -14,17 +14,22 @@ import org.json.JSONObject
 object RecognitionProvider {
     private const val TAG = "RecognitionProvider"
     
-    // Model selection order: INT8 → FP16 → FP32
+    // Model selection order: FP32 (default) → FP16 → INT8
+    // FP32 is recommended for best accuracy and simplicity (no quantization needed)
     private val MODEL_CANDIDATES = listOf(
-        "expressora_unified_int8.tflite",
+        "expressora_unified.tflite",
         "expressora_unified_fp16.tflite",
-        "expressora_unified.tflite"
+        "expressora_unified_int8.tflite"
     )
     
     private const val SIGNATURE_ASSET = "model_signature.json"
     private const val LABELS_ASSET = "expressora_labels.json"
     private const val LABELS_MAPPED_ASSET = "expressora_labels_mapped.json"
     private const val HAND_TASK_ASSET = "hand_landmarker.task"
+    
+    // Feature scaling files (required for retrained model)
+    const val FEATURE_MEAN_ASSET = "feature_mean.npy"
+    const val FEATURE_STD_ASSET = "feature_std.npy"
 
     // Unified model operates on two hands (21 landmarks * 3 coordinates * 2 hands)
     const val TWO_HANDS: Boolean = true
@@ -128,6 +133,26 @@ object RecognitionProvider {
                 modelSignature = it
                 val mode = if (it.isMultiHead()) "multi-head (gloss + origin)" else "single-head (gloss only)"
                 Log.i(TAG, "Model signature: $mode, ${outputs.size} output(s)")
+                
+                // Validate input shape matches expected (126 features)
+                val inputShape = inputs.firstOrNull()?.shape
+                if (inputShape != null && inputShape.isNotEmpty()) {
+                    val inputSize = inputShape.last() // Last dimension is feature count
+                    if (inputSize != FEATURE_DIM) {
+                        Log.w(TAG, "⚠️ Model input size mismatch: expected $FEATURE_DIM, got $inputSize from shape $inputShape")
+                    } else {
+                        Log.i(TAG, "✅ Model input shape validated: $inputShape (matches expected $FEATURE_DIM features)")
+                    }
+                }
+                
+                // Validate output size (should be 197 classes for retrained model)
+                val outputShape = outputs.firstOrNull()?.shape
+                if (outputShape != null && outputShape.isNotEmpty()) {
+                    val outputSize = outputShape.last() // Last dimension is class count
+                    Log.i(TAG, "Model output shape: $outputShape ($outputSize classes)")
+                    // Note: 197 is expected for retrained model, but we don't enforce it strictly
+                    // to allow for different model versions
+                }
             }
         }.getOrElse { error ->
             Log.w(TAG, "Failed to parse model_signature.json: ${error.message}")
@@ -145,6 +170,13 @@ object RecognitionProvider {
         
         runCatching { context.assets.open(LABELS_MAPPED_ASSET).close() }
             .onFailure { Log.w(TAG, "Mapped labels not found; will use raw labels.") }
+        
+        // Verify feature scaling files exist (required for retrained model)
+        runCatching { context.assets.open(FEATURE_MEAN_ASSET).close() }
+            .onFailure { Log.e(TAG, "CRITICAL: Feature scaling file not found: $FEATURE_MEAN_ASSET") }
+        
+        runCatching { context.assets.open(FEATURE_STD_ASSET).close() }
+            .onFailure { Log.e(TAG, "CRITICAL: Feature scaling file not found: $FEATURE_STD_ASSET") }
         
         getModelSignature(context)
         

@@ -7,16 +7,19 @@ import android.graphics.ImageFormat
 import android.graphics.Matrix
 import android.graphics.Rect
 import android.graphics.YuvImage
+import android.os.Process
 import android.util.Log
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageProxy
 import com.example.expressora.recognition.config.PerformanceConfig
+import com.example.expressora.recognition.roi.HandRoiDetector
 import com.example.expressora.recognition.utils.LogUtils
 import java.io.ByteArrayOutputStream
 
 class CameraBitmapAnalyzer(
     private val onBitmap: (Bitmap) -> Unit,
-    private val frameSkip: Int = PerformanceConfig.BASE_FRAME_SKIP
+    private val frameSkip: Int = PerformanceConfig.BASE_FRAME_SKIP,
+    private val roiDetector: HandRoiDetector? = null
 ) : ImageAnalysis.Analyzer {
     
     companion object {
@@ -33,9 +36,28 @@ class CameraBitmapAnalyzer(
     // Bitmap pool for reuse (ARGB_8888 format for direct conversion)
     private val bitmapPool = mutableListOf<Bitmap>()
     private val maxPoolSize = PerformanceConfig.BITMAP_POOL_SIZE
+    
+    // ROI offset for coordinate mapping (stored per frame)
+    @Volatile
+    private var currentRoiOffset: Rect? = null
+    
+    // Full image dimensions for coordinate mapping
+    @Volatile
+    private var fullImageWidth: Int = 0
+    @Volatile
+    private var fullImageHeight: Int = 0
+    
+    // Current processed bitmap dimensions (for coordinate mapping)
+    @Volatile
+    private var currentProcessedWidth: Int = 0
+    @Volatile
+    private var currentProcessedHeight: Int = 0
 
     override fun analyze(image: ImageProxy) {
         try {
+            // Set background thread priority for better performance on low-end devices
+            Process.setThreadPriority(Process.THREAD_PRIORITY_BACKGROUND)
+            
             // Adaptive frame skipping based on measured FPS
             frameCounter++
             
@@ -78,18 +100,58 @@ class CameraBitmapAnalyzer(
             // so we handle the reversal in HandToFeaturesBridge mapping logic instead.
             // This ensures consistent behavior for both front and rear cameras.
             
-            // Optional downscaling (usually disabled with 480x360 input)
-            val finalBitmap = if (PerformanceConfig.ENABLE_DOWNSCALING && 
-                (rotated.width > PerformanceConfig.DOWNSCALE_WIDTH || 
-                 rotated.height > PerformanceConfig.DOWNSCALE_HEIGHT)) {
-                downscaleBitmap(rotated)
+            // Store full image dimensions for coordinate mapping
+            fullImageWidth = rotated.width
+            fullImageHeight = rotated.height
+            
+            // ROI detection and cropping
+            val roiRect = if (roiDetector != null && PerformanceConfig.ROI_ENABLED && roiDetector.isAvailable()) {
+                roiDetector.detectRoi(rotated)
             } else {
+                null
+            }
+            
+            val finalBitmap = if (roiRect != null && roiRect.width() >= 50 && roiRect.height() >= 50) {
+                // Crop to ROI
+                try {
+                    val cropped = Bitmap.createBitmap(
+                        rotated,
+                        roiRect.left,
+                        roiRect.top,
+                        roiRect.width(),
+                        roiRect.height()
+                    )
+                    returnBitmapToPool(rotated)
+                    currentRoiOffset = roiRect
+                    LogUtils.debugIfVerbose(TAG) { "📷 ROI cropped: ${roiRect.width()}x${roiRect.height()} from ${rotated.width}x${rotated.height}" }
+                    cropped
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to crop ROI, using full frame", e)
+                    currentRoiOffset = null
+                    rotated
+                }
+            } else {
+                // Use full frame (ROI detection failed or disabled)
+                currentRoiOffset = null
                 rotated
             }
             
+            // Optional downscaling (usually disabled with 480x360 input)
+            val processedBitmap = if (PerformanceConfig.ENABLE_DOWNSCALING && 
+                (finalBitmap.width > PerformanceConfig.DOWNSCALE_WIDTH || 
+                 finalBitmap.height > PerformanceConfig.DOWNSCALE_HEIGHT)) {
+                downscaleBitmap(finalBitmap)
+            } else {
+                finalBitmap
+            }
+            
+            // Store processed bitmap dimensions for coordinate mapping
+            currentProcessedWidth = processedBitmap.width
+            currentProcessedHeight = processedBitmap.height
+            
             // Pass bitmap to callback for processing
-            LogUtils.debugIfVerbose(TAG) { "📷 Frame converted to bitmap: ${finalBitmap.width}x${finalBitmap.height}, calling onBitmap callback" }
-            onBitmap(finalBitmap)
+            LogUtils.debugIfVerbose(TAG) { "📷 Frame converted to bitmap: ${processedBitmap.width}x${processedBitmap.height}, calling onBitmap callback" }
+            onBitmap(processedBitmap)
         } catch (error: Throwable) {
             Log.e(TAG, "❌ Frame analysis error: ${error.message}", error)
         } finally {
@@ -272,5 +334,21 @@ class CameraBitmapAnalyzer(
             }
         }
     }
+    
+    /**
+     * Get current ROI offset for coordinate mapping.
+     * Returns null if no ROI is active.
+     */
+    fun getCurrentRoiOffset(): Rect? = currentRoiOffset
+    
+    /**
+     * Get full image dimensions for coordinate mapping.
+     */
+    fun getFullImageDimensions(): Pair<Int, Int> = Pair(fullImageWidth, fullImageHeight)
+    
+    /**
+     * Get current processed bitmap dimensions (cropped or full).
+     */
+    fun getProcessedBitmapDimensions(): Pair<Int, Int> = Pair(currentProcessedWidth, currentProcessedHeight)
 }
 

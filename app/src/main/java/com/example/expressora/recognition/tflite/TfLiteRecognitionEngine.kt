@@ -109,10 +109,23 @@ class TfLiteRecognitionEngine(
                 
                 // DEBUG: Log feature vector statistics (only in debug builds)
                 val featureStats = calculateFeatureStats(feature)
+                
+                // CRITICAL: Validate that features are scaled (for retrained model)
+                // Scaled features should have mean near 0 and std near 1 (after scaling)
+                // Raw MediaPipe coordinates are in [0, 1] range, so unscaled features would have mean ~0.5
+                val featureMean = featureStats.mean
+                val isLikelyScaled = kotlin.math.abs(featureMean) < 0.1f // Scaled features should have mean near 0
+                
                 LogUtils.debugIfVerbose(TAG) { "Feature vector stats: size=${feature.size}, expected=$featureDim, " +
                         "nonZero=${featureStats.nonZeroCount}, min=${featureStats.min}, " +
                         "max=${featureStats.max}, mean=${featureStats.mean}, " +
-                        "isAllZeros=${featureStats.isAllZeros}, hasNaN=${featureStats.hasNaN}" }
+                        "isAllZeros=${featureStats.isAllZeros}, hasNaN=${featureStats.hasNaN}, " +
+                        "isLikelyScaled=$isLikelyScaled" }
+                
+                if (!isLikelyScaled && featureStats.nonZeroCount > 0) {
+                    Log.w(TAG, "⚠️ WARNING: Features may not be scaled! Mean=$featureMean (expected near 0 for scaled features). " +
+                            "Model requires feature scaling: (features - mean) / std")
+                }
                 
                 // Calculate feature vector hash to detect significant changes
                 val featureHash = calculateArrayHash(feature)

@@ -36,11 +36,12 @@ class RecognitionViewModel(
         .sample(62L) // Sample every ~62ms for ~16 FPS
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), _state.value)
     
-    // Recognition result state (detailed) - throttled for UI updates
+    // Recognition result state (detailed) - NO throttling to ensure all updates reach UI
+    // Using conflate() instead of sample() to ensure latest value is always emitted
     private val _recognitionResult = MutableStateFlow<RecognitionResult?>(null)
     val recognitionResult: StateFlow<RecognitionResult?> = _recognitionResult
         .asSharedFlow()
-        .sample(62L) // Sample every ~62ms for ~16 FPS
+        .conflate() // Conflate to ensure latest value is always emitted (no throttling)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), _recognitionResult.value)
     
     // Accumulator
@@ -153,13 +154,24 @@ class RecognitionViewModel(
      */
     private fun processRecognitionResult(result: RecognitionResult) {
         LogUtils.d(TAG) { "📥 Processing recognition result: label='${result.glossLabel}', conf=${result.glossConf} (${(result.glossConf * 100).toInt()}%), " +
-                "origin='${result.originLabel}', originConf=${result.originConf}" }
+                "origin='${result.originLabel}', originConf=${result.originConf}, " +
+                "top3Probs=[${result.debugInfo?.softmaxProbs?.take(3)?.joinToString { "${it.label}=${(it.value * 100).toInt()}%" }}]" }
         
         val isHighConfidence = result.glossConf >= 0.75f
         val isSignChange = result.glossLabel != lastRecognitionLabel
         
+        // CRITICAL: Also check if top 3 predictions changed (even if top label is same)
+        // This helps detect when model output is changing but top prediction remains same
+        val currentTop3 = result.debugInfo?.softmaxProbs?.take(3)?.map { it.label } ?: emptyList()
+        val lastTop3 = _recognitionResult.value?.debugInfo?.softmaxProbs?.take(3)?.map { it.label } ?: emptyList()
+        val top3Changed = currentTop3 != lastTop3
+        
         if (isSignChange) {
             LogUtils.d(TAG) { "🔄 Sign changed: '${lastRecognitionLabel}' -> '${result.glossLabel}'" }
+        }
+        if (top3Changed && !isSignChange) {
+            LogUtils.d(TAG) { "🔄 Top 3 predictions changed (same top label): " +
+                    "was=[${lastTop3.joinToString()}], now=[${currentTop3.joinToString()}]" }
         }
         
         // Track stuck detection
@@ -197,18 +209,33 @@ class RecognitionViewModel(
             lastRecognitionLabel = result.glossLabel
         }
         
+        // CRITICAL: Always emit updates to ensure UI stays responsive
+        // Even if model output is static, we want to show that it's processing
         // Allow immediate update if:
         // 1. High confidence (>= 75%) - more reliable, show immediately
         // 2. Sign changed significantly - reset and show new sign
-        // 3. Otherwise, wait for MIN_STABLE_FRAMES
+        // 3. Top 3 predictions changed (even if top label is same) - model output is changing
+        // 4. Confidence changed significantly (>= 5% change) - model is updating
+        // 5. Otherwise, wait for MIN_STABLE_FRAMES (but still emit periodically)
+        val lastConf = _recognitionResult.value?.glossConf ?: 0f
+        val confChanged = kotlin.math.abs(result.glossConf - lastConf) >= 0.05f
+        
         val shouldEmit = isHighConfidence || 
                         (isSignChange && stableFrameCount >= 1) ||
-                        stableFrameCount >= PerformanceConfig.MIN_STABLE_FRAMES
+                        (top3Changed && stableFrameCount >= 1) || // Allow updates when top 3 changes
+                        (confChanged && stableFrameCount >= 1) || // Allow updates when confidence changes
+                        stableFrameCount >= PerformanceConfig.MIN_STABLE_FRAMES ||
+                        stableFrameCount % 5 == 0 // Emit every 5 frames even if nothing changed (to show activity)
         
         if (shouldEmit) {
+            // CRITICAL: Create a new RecognitionResult with updated timestamp to force UI recomposition
+            // This ensures the UI updates even when the model output values are identical
+            val resultWithNewTimestamp = result.copy(timestamp = System.currentTimeMillis())
+            
             LogUtils.d(TAG) { "✅ UPDATING ViewModel state: label='${result.glossLabel}', conf=${result.glossConf}, " +
-                    "stableFrames=$stableFrameCount, isHighConf=$isHighConfidence, isSignChange=$isSignChange" }
-            _recognitionResult.value = result
+                    "stableFrames=$stableFrameCount, isHighConf=$isHighConfidence, isSignChange=$isSignChange, " +
+                    "top3Changed=$top3Changed, confChanged=$confChanged, top3=[${currentTop3.joinToString()}]" }
+            _recognitionResult.value = resultWithNewTimestamp
             
             // Debounce accumulator updates to avoid rapid-fire additions
             debounceJob?.cancel()
@@ -219,7 +246,8 @@ class RecognitionViewModel(
             }
         } else {
             LogUtils.d(TAG) { "⏸️ Skipping state update: stableFrames=$stableFrameCount (need ${PerformanceConfig.MIN_STABLE_FRAMES}), " +
-                    "isHighConf=$isHighConfidence, isSignChange=$isSignChange, currentLabel='${result.glossLabel}'" }
+                    "isHighConf=$isHighConfidence, isSignChange=$isSignChange, top3Changed=$top3Changed, " +
+                    "currentLabel='${result.glossLabel}', top3=[${currentTop3.joinToString()}]" }
         }
     }
     
