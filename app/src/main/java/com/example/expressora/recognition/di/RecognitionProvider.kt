@@ -5,11 +5,14 @@ import android.util.Log
 import com.example.expressora.recognition.diagnostics.RecognitionDiagnostics
 import com.example.expressora.recognition.engine.RecognitionEngine
 import com.example.expressora.recognition.model.ModelSignature
+import com.example.expressora.recognition.grpc.LandmarkStreamer
 import com.example.expressora.recognition.pipeline.RecognitionViewModelFactory
 import com.example.expressora.recognition.tflite.TfLiteRecognitionEngine
 import com.example.expressora.recognition.utils.DeviceCapabilityDetector
 import com.example.expressora.recognition.utils.LogUtils
+import com.example.expressora.utils.NetworkUtils
 import org.json.JSONObject
+import android.content.SharedPreferences
 
 object RecognitionProvider {
     private const val TAG = "RecognitionProvider"
@@ -26,6 +29,7 @@ object RecognitionProvider {
     private const val LABELS_ASSET = "expressora_labels.json"
     private const val LABELS_MAPPED_ASSET = "expressora_labels_mapped.json"
     private const val HAND_TASK_ASSET = "hand_landmarker.task"
+    const val HOLISTIC_TASK_ASSET = "holistic_landmarker.task"
     
     // Feature scaling files (required for retrained model)
     const val FEATURE_MEAN_ASSET = "feature_mean.npy"
@@ -165,6 +169,13 @@ object RecognitionProvider {
         context.assets.open(model).close()
         context.assets.open(HAND_TASK_ASSET).close()
         
+        // Verify holistic model exists (required for online mode)
+        runCatching { context.assets.open(HOLISTIC_TASK_ASSET).close() }
+            .onFailure { 
+                Log.w(TAG, "Holistic model not found: $HOLISTIC_TASK_ASSET. Online mode will not work. " +
+                        "Offline mode can still use $HAND_TASK_ASSET.")
+            }
+        
         runCatching { context.assets.open(LABELS_ASSET).close() }
             .onFailure { Log.w(TAG, "Labels JSON not found; runtime will synthesize CLASS_i.") }
         
@@ -203,8 +214,55 @@ object RecognitionProvider {
         }
     }
 
+    /**
+     * Provide ViewModel factory with hybrid mode support (Tweak 3).
+     * Checks user preference for online/offline mode.
+     */
     fun provideViewModelFactory(context: Context): RecognitionViewModelFactory {
-        return RecognitionViewModelFactory(provideEngine(context), context)
+        val prefs = context.getSharedPreferences("expressora_prefs", Context.MODE_PRIVATE)
+        val useOnlineMode = prefs.getBoolean("use_online_mode", true) // Default to online
+        
+        Log.d(TAG, "Creating ViewModelFactory: useOnlineMode=$useOnlineMode")
+        
+        if (useOnlineMode) {
+            // Online mode: Create streamer
+            val streamer = provideStreamer(context)
+            return RecognitionViewModelFactory(
+                engine = null,
+                streamer = streamer,
+                context = context,
+                useOnlineMode = true
+            )
+        } else {
+            // Offline mode: Create TFLite engine (Tweak 3 - Fallback)
+            val engine = provideEngine(context)
+            return RecognitionViewModelFactory(
+                engine = engine,
+                streamer = null,
+                context = context,
+                useOnlineMode = false
+            )
+        }
+    }
+    
+    /**
+     * Provide LandmarkStreamer for online mode.
+     * Uses automatic IP detection: emulator uses 10.0.2.2, physical device uses BuildConfig.HOST_IP (detected at build time).
+     */
+    fun provideStreamer(context: Context): LandmarkStreamer {
+        val prefs = context.getSharedPreferences("expressora_prefs", Context.MODE_PRIVATE)
+        // Use NetworkUtils to get smart default (emulator vs physical device), but allow manual override via SharedPreferences
+        val serverHost = prefs.getString("grpc_server_host", NetworkUtils.getGrpcHost()) 
+            ?: NetworkUtils.getGrpcHost()
+        val serverPort = prefs.getInt("grpc_server_port", 50051)
+        
+        Log.d(TAG, "Creating LandmarkStreamer: host=$serverHost, port=$serverPort (auto-detected: ${NetworkUtils.getGrpcHost()})")
+        
+        return LandmarkStreamer(
+            context = context.applicationContext,
+            serverHost = serverHost,
+            serverPort = serverPort
+        )
     }
 
     fun zeroFeatureVector(): FloatArray = FloatArray(FEATURE_DIM) { 0f }

@@ -1,5 +1,6 @@
 import java.net.URL
 import java.net.URI
+import java.net.NetworkInterface
 import java.time.Instant
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
@@ -10,6 +11,52 @@ import org.gradle.api.provider.Property
 import org.gradle.api.tasks.Input
 import org.gradle.api.tasks.OutputFile
 import org.gradle.api.tasks.TaskAction
+
+// Function to detect local LAN IP address for gRPC server connection
+fun getLocalIp(): String {
+    var ip = "10.0.2.2" // Default to emulator fallback
+    var wifiIp: String? = null // Prefer Wi-Fi interface
+    try {
+        val interfaces = NetworkInterface.getNetworkInterfaces()
+        while (interfaces.hasMoreElements()) {
+            val iface = interfaces.nextElement()
+            if (iface.isLoopback || !iface.isUp) continue
+            
+            val ifaceName = iface.name.lowercase()
+            val isWifi = ifaceName.contains("wifi") || ifaceName.contains("wlan") || ifaceName.contains("wireless")
+            val isVmware = ifaceName.contains("vmware") || ifaceName.contains("vbox") || ifaceName.contains("virtual")
+            
+            // Skip VMware/virtual adapters unless no other option
+            if (isVmware) continue
+            
+            val addresses = iface.inetAddresses
+            while (addresses.hasMoreElements()) {
+                val addr = addresses.nextElement()
+                // Filter for IPv4 and typical LAN prefixes (192.168.x.x or 10.x.x.x)
+                if (!addr.isLoopbackAddress && addr.hostAddress.indexOf(':') < 0) {
+                    val sAddr = addr.hostAddress
+                    if (sAddr.startsWith("192.") || sAddr.startsWith("10.")) {
+                        // Prefer Wi-Fi interfaces
+                        if (isWifi) {
+                            wifiIp = sAddr
+                        } else if (ip == "10.0.2.2") {
+                            // Use first non-VMware interface as fallback
+                            ip = sAddr
+                        }
+                    }
+                }
+            }
+        }
+        // Return Wi-Fi IP if found, otherwise fallback to first valid IP
+        return wifiIp ?: ip
+    } catch (e: Exception) {
+        println("Could not detect IP: $e")
+    }
+    return ip
+}
+
+val detectedHostIp = getLocalIp()
+println("🚀 Injecting Server IP: $detectedHostIp")
 
 plugins {
     alias(libs.plugins.android.application)
@@ -31,6 +78,9 @@ android {
         versionName = "1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        
+        // Inject detected host IP for gRPC server connection (auto-detected at build time)
+        buildConfigField("String", "HOST_IP", "\"$detectedHostIp\"")
         
         // Note: Baseline profiles can be enabled when using Android Gradle Plugin 7.4+
         // and the androidx.profileinstaller:profileinstaller dependency.
@@ -81,10 +131,20 @@ protobuf {
     protoc {
         artifact = "com.google.protobuf:protoc:3.21.12"
     }
+    plugins {
+        create("grpc") {
+            artifact = "io.grpc:protoc-gen-grpc-java:1.60.0"
+        }
+    }
     generateProtoTasks {
         all().forEach { task ->
             task.builtins {
                 create("java") {
+                    option("lite")
+                }
+            }
+            task.plugins {
+                create("grpc") {
                     option("lite")
                 }
             }
@@ -96,6 +156,12 @@ dependencies {
     // Proto DataStore
     implementation("androidx.datastore:datastore:1.0.0")
     implementation("com.google.protobuf:protobuf-javalite:3.21.12")
+    
+    // gRPC for bidirectional streaming (Landmark Streaming Architecture)
+    implementation("io.grpc:grpc-okhttp:1.60.0")
+    implementation("io.grpc:grpc-protobuf-lite:1.60.0")
+    implementation("io.grpc:grpc-stub:1.60.0")
+    implementation("javax.annotation:javax.annotation-api:1.3.2") // Required for generated code
     
     // Firebase BOM
     implementation(platform("com.google.firebase:firebase-bom:33.4.0"))
@@ -132,7 +198,8 @@ dependencies {
     implementation("org.tensorflow:tensorflow-lite:2.14.0")
     implementation("org.tensorflow:tensorflow-lite-gpu:2.14.0")
     implementation("org.tensorflow:tensorflow-lite-support:0.4.4")
-    implementation("com.google.mediapipe:tasks-vision:latest.release")
+    // MediaPipe Tasks Vision - explicit version for Holistic support
+    implementation("com.google.mediapipe:tasks-vision:0.10.11")
     
     // OpenCV Android SDK for computer vision tasks
     // Note: OpenCV for Android requires manual SDK integration or specific repository setup
@@ -328,21 +395,27 @@ abstract class DownloadTask : DefaultTask() {
         val destination = outFile.asFile.get()
         destination.parentFile.mkdirs()
         if (destination.exists()) {
-            logger.lifecycle("hand_landmarker.task already present at ${destination.relativeToOrSelf(project.projectDir)}")
+            logger.lifecycle("${destination.name} already present at ${destination.relativeToOrSelf(project.projectDir)}")
             return
         }
 
         runCatching {
             val urlString = url.get()
+            logger.lifecycle("Downloading ${destination.name} from $urlString...")
             val connection = URI.create(urlString).toURL()
             connection.openStream().use { inputStream ->
                 destination.outputStream().use { outputStream ->
                     inputStream.copyTo(outputStream)
                 }
             }
-            logger.lifecycle("Downloaded ${destination.name} -> ${destination.relativeToOrSelf(project.projectDir)}")
+            val fileSizeMB = destination.length() / (1024.0 * 1024.0)
+            logger.lifecycle("Downloaded ${destination.name} (${String.format("%.2f", fileSizeMB)} MB) -> ${destination.relativeToOrSelf(project.projectDir)}")
         }.onFailure {
-            logger.warn("Could not download hand_landmarker.task (${it.message}). Place it in ${destination.relativeToOrSelf(project.projectDir)} if needed.")
+            logger.error("❌ Could not download ${destination.name} from ${url.get()}")
+            logger.error("   Error: ${it.message}")
+            logger.error("   Please place ${destination.name} manually in ${destination.relativeToOrSelf(project.projectDir)} if needed.")
+            logger.warn("   Build will continue, but the app may not work without this file.")
+            // Don't throw - allow build to continue, but user will see error in app
         }
     }
 }

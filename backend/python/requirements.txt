@@ -1,0 +1,8 @@
+grpcio==1.60.0
+grpcio-tools==1.60.0
+protobuf>=4.21.6,<5.0
+numpy==1.26.0
+google-generativeai
+python-dotenv
+tenacity
+
