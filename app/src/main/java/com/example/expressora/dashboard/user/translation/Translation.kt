@@ -24,6 +24,9 @@ import androidx.compose.animation.core.tween
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -38,8 +41,10 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.shape.CutCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Camera
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CloseFullscreen
 import androidx.compose.material.icons.filled.OpenInFull
 import androidx.compose.material.icons.filled.SwapCalls
@@ -47,11 +52,16 @@ import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -59,6 +69,8 @@ import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -77,12 +89,12 @@ import com.example.expressora.recognition.camera.CameraBitmapAnalyzer
 import com.example.expressora.recognition.di.RecognitionProvider
 import com.example.expressora.recognition.diagnostics.RecognitionDiagnostics
 import com.example.expressora.recognition.model.GlossEvent
-import com.example.expressora.recognition.mediapipe.HandLandmarkerEngine
-import com.example.expressora.recognition.pipeline.HandToFeaturesBridge
+import com.example.expressora.recognition.mediapipe.HolisticLandmarkerEngine
+import com.google.mediapipe.tasks.vision.holisticlandmarker.HolisticLandmarkerResult
 import com.example.expressora.recognition.pipeline.RecognitionViewModel
 import com.example.expressora.recognition.config.PerformanceConfig
 import com.example.expressora.recognition.roi.MediaPipePalmRoiDetector
-import com.example.expressora.recognition.view.HandLandmarkOverlay
+import com.example.expressora.recognition.view.HolisticLandmarkOverlay
 import com.example.expressora.ui.theme.InterFontFamily
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -106,12 +118,15 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.filled.Backspace
 import androidx.compose.material.icons.filled.Clear
+import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Send
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.Smartphone
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
+import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.OutlinedCard
@@ -125,17 +140,21 @@ class TranslationActivity : ComponentActivity(), TextToSpeech.OnInitListener {
     private var tts: TextToSpeech? = null
     private var ttsReady by mutableStateOf(false)
     private var selectedLanguage by mutableStateOf("English")
-    private lateinit var handEngine: HandLandmarkerEngine
+    private lateinit var holisticEngine: HolisticLandmarkerEngine
     private var recognitionEnabled = false
     private var handEngineReady = false
     private var assetsReady = false
     private var cameraPermissionGranted = false
     @Volatile
-    private var handLandmarkOverlay: HandLandmarkOverlay? = null
+    private var holisticLandmarkOverlay: HolisticLandmarkOverlay? = null
     @Volatile
     private var handEngineInitializing = false
     private val _handEngineInitializationState = MutableSharedFlow<Boolean>(replay = 1)
     val handEngineInitializationState = _handEngineInitializationState.asSharedFlow()
+    
+    // Initialization error message for debug UI
+    private val _initializationErrorState = MutableSharedFlow<String?>(replay = 1)
+    val initializationErrorState = _initializationErrorState.asSharedFlow()
     
     // ROI detector for performance optimization
     @Volatile
@@ -162,8 +181,8 @@ class TranslationActivity : ComponentActivity(), TextToSpeech.OnInitListener {
     private val cameraPermissionFlow = _cameraPermissionState.asSharedFlow()
     
     // Function to set overlay from Compose
-    internal fun setHandLandmarkOverlay(overlay: HandLandmarkOverlay) {
-        handLandmarkOverlay = overlay
+    internal fun setHolisticLandmarkOverlay(overlay: HolisticLandmarkOverlay) {
+        holisticLandmarkOverlay = overlay
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -171,9 +190,6 @@ class TranslationActivity : ComponentActivity(), TextToSpeech.OnInitListener {
         enableEdgeToEdge()
         tts = TextToSpeech(this, this)
         
-        // Load Lite Mode preference
-        val prefs = getSharedPreferences("ExpressoraPrefs", Context.MODE_PRIVATE)
-        PerformanceConfig.LITE_MODE_ENABLED = prefs.getBoolean("lite_mode_enabled", false)
 
         recognitionEnabled = false
         handEngineReady = false
@@ -208,60 +224,94 @@ class TranslationActivity : ComponentActivity(), TextToSpeech.OnInitListener {
                 }
             }
             
-            // Initialize FeatureScaler (required for retrained model)
-            try {
-                HandToFeaturesBridge.initializeScaler(this@TranslationActivity)
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed to initialize FeatureScaler, continuing without feature scaling", e)
-                // App will continue to work, but model predictions may be incorrect
-            }
-            
-            // Initialize HandLandmarkerEngine on background thread
+            // Initialize HolisticLandmarkerEngine on background thread
             handEngineInitializing = true
             lifecycleScope.launch(Dispatchers.IO) {
                 try {
-                    Log.i(TAG, "Initializing HandLandmarkerEngine on background thread...")
-                    val initializedEngine = HandLandmarkerEngine(this@TranslationActivity).apply {
+                    Log.i(TAG, "Initializing HolisticLandmarkerEngine on background thread...")
+                    // Frame counter for periodic logging
+                    var frameCount = 0
+                    var handsDetectedCount = 0
+                    var faceDetectedCount = 0
+                    
+                    val initializedEngine = HolisticLandmarkerEngine(this@TranslationActivity).apply {
                         onResult = { result ->
+                            frameCount++
+                            
+                            // Extract landmark data for logging (pose removed)
+                            val leftHand = result.leftHandLandmarks()
+                            val rightHand = result.rightHandLandmarks()
+                            val faceLandmarks = result.faceLandmarks()
+                            
+                            val hasLeftHand = leftHand != null && leftHand.isNotEmpty()
+                            val hasRightHand = rightHand != null && rightHand.isNotEmpty()
+                            val hasFace = faceLandmarks != null && faceLandmarks.isNotEmpty()
+                            
+                            if (hasLeftHand) handsDetectedCount++
+                            if (hasRightHand) handsDetectedCount++
+                            if (hasFace) faceDetectedCount++
+                            
+                            // Detailed logging every frame (verbose)
+                            if (frameCount % 30 == 0 || hasLeftHand || hasRightHand || hasFace) {
+                                Log.d(TAG, "🎯 Holistic Detection [Frame $frameCount]: " +
+                                        "LHand=${hasLeftHand}, RHand=${hasRightHand}, " +
+                                        "Face=${hasFace} (${faceLandmarks?.size ?: 0} pts)")
+                            }
+                            
+                            // Periodic summary logging (every 30 frames)
+                            if (frameCount % 30 == 0) {
+                                val handsRate = (handsDetectedCount * 100f / 30f).toInt()
+                                val faceRate = (faceDetectedCount * 100f / 30f).toInt()
+                                Log.i(TAG, "📊 Detection Summary [Last 30 frames]: " +
+                                        "Hands=$handsRate%, Face=$faceRate%")
+                                // Reset counters
+                                handsDetectedCount = 0
+                                faceDetectedCount = 0
+                            }
+                            
                             // Update overlay with landmarks for visualization (must run on UI thread)
-                            handLandmarkOverlay?.let { overlay ->
-                                overlay.post { overlay.setHandLandmarks(result, 640, 480) }
+                            holisticLandmarkOverlay?.let { overlay ->
+                                // Get image dimensions from camera analyzer
+                                val analyzer = cameraAnalyzer
+                                val (imageWidth, imageHeight) = analyzer?.getFullImageDimensions() ?: Pair(640, 480)
+                                
+                                // Update overlay on UI thread
+                                overlay.post {
+                                    overlay.setHolisticLandmarks(result, imageWidth, imageHeight)
+                                }
                             }
 
-                            // Get ROI info for coordinate mapping
+                            // Get image dimensions from camera analyzer
                             val analyzer = cameraAnalyzer
-                            val roiOffset = analyzer?.getCurrentRoiOffset()
-                            val (fullWidth, fullHeight) = analyzer?.getFullImageDimensions() ?: Pair(0, 0)
-                            val (croppedWidth, croppedHeight) = analyzer?.getProcessedBitmapDimensions() ?: Pair(0, 0)
+                            val (imageWidth, imageHeight) = analyzer?.getFullImageDimensions() ?: Pair(640, 480)
 
-                            // Continue with recognition (with ROI coordinate mapping if applicable)
-                            val hands = HandToFeaturesBridge.extract(
-                                result = result,
-                                roiOffset = roiOffset,
-                                croppedWidth = croppedWidth,
-                                croppedHeight = croppedHeight,
-                                fullWidth = fullWidth,
-                                fullHeight = fullHeight
-                            )
-                            if (hands.left != null || hands.right != null) {
-                                Log.d(HAND_TAG, "Detected ${listOfNotNull(hands.left, hands.right).size} hand(s)")
+                            // Send landmarks directly to ViewModel (online mode) or convert to features (offline mode)
+                            val timestampMs = System.currentTimeMillis()
+                            
+                            // Log when sending to gRPC server (pose removed)
+                            if (hasLeftHand || hasRightHand || hasFace) {
+                                Log.v(TAG, "📤 Sending landmarks to server: " +
+                                        "hands=${if (hasLeftHand) "L" else ""}${if (hasRightHand) "R" else ""}, " +
+                                        "face=${if (hasFace) "✓" else "✗"}")
                             }
-                            val vector = HandToFeaturesBridge.toVec(hands, RecognitionProvider.TWO_HANDS)
-                            recognitionViewModel.onFeatures(vector)
+                            
+                            // Check if we're in online mode (gRPC streaming)
+                            // The ViewModel will handle routing to either streamer or engine
+                            recognitionViewModel.onLandmarks(result, timestampMs, imageWidth, imageHeight)
                         }
-                        onError = { error -> Log.e(HAND_TAG, "Error running hand landmarker", error) }
+                        onError = { error -> Log.e(HAND_TAG, "Error running holistic landmarker", error) }
                     }
                     
                     // Switch to main thread to update UI state
                     withContext(Dispatchers.Main) {
-                        handEngine = initializedEngine
+                        holisticEngine = initializedEngine
                         handEngineReady = true
                         recognitionEnabled = true  // Auto-start recognition when ready
                         handEngineInitializing = false
                         _handEngineInitializationState.emit(true)
-                        Log.i(TAG, "HandLandmarkerEngine initialized successfully on background thread")
+                        Log.i(TAG, "HolisticLandmarkerEngine initialized successfully on background thread")
                         
-                        val handDelegate = "${handEngine.getDelegateType().name}/${handEngine.getRunningMode().name}"
+                        val holisticDelegate = "${holisticEngine.getDelegateType().name}/${holisticEngine.getRunningMode().name}"
 
                         // Log startup configuration (once, after initialization)
                         launch {
@@ -269,23 +319,41 @@ class TranslationActivity : ComponentActivity(), TextToSpeech.OnInitListener {
                             delay(1000)
                             val classifierDelegate = recognitionViewModel.getClassifierDelegate()
                             val classifierModel = recognitionViewModel.getClassifierModelVariant()
-                            // MediaPipe Hands typically uses GPU for inference
                             RecognitionDiagnostics.logStartupConfig(
                                 context = this@TranslationActivity,
-                                handsDelegate = handDelegate,
+                                handsDelegate = holisticDelegate,
                                 classifierDelegate = classifierDelegate,
                                 classifierModel = classifierModel,
-                                faceDelegate = "CPU"
+                                faceDelegate = holisticDelegate // Holistic includes face
                             )
                         }
                     }
                 } catch (error: Throwable) {
                     withContext(Dispatchers.Main) {
-                        Log.e(TAG, "Failed to initialize HandLandmarkerEngine", error)
+                        val errorMessage = when {
+                            error.message?.contains("not found in assets") == true -> 
+                                "Holistic model file missing. Please rebuild the app."
+                            error.message?.contains("Failed to create HolisticLandmarker") == true ->
+                                "Failed to load holistic model: ${error.message}"
+                            else -> "Engine initialization failed: ${error.message ?: error.javaClass.simpleName}"
+                        }
+                        
+                        Log.e(TAG, "Failed to initialize HolisticLandmarkerEngine: $errorMessage", error)
+                        
+                        // Show user-visible error
+                        Toast.makeText(
+                            this@TranslationActivity,
+                            "Failed to initialize recognition engine: ${error.message?.take(50) ?: "Unknown error"}",
+                            Toast.LENGTH_LONG
+                        ).show()
+                        
                         handEngineReady = false
                         handEngineInitializing = false
                         _handEngineInitializationState.emit(false)
                         assetsReady = false
+                        
+                        // Emit error message for debug UI
+                        _initializationErrorState.emit(errorMessage)
                     }
                 }
             }
@@ -306,6 +374,27 @@ class TranslationActivity : ComponentActivity(), TextToSpeech.OnInitListener {
             val recognitionResult by recognitionViewModel.recognitionResult.collectAsState()
             val accumulatorState by recognitionViewModel.accumulatorState.collectAsState()
             val lastBusEvent by recognitionViewModel.lastBusEvent.collectAsState()
+                val glossList by recognitionViewModel.glossList.collectAsState()
+                val currentTone by recognitionViewModel.currentTone.collectAsState()
+                val isScanning by recognitionViewModel.isScanning.collectAsState()
+                val translationResult by recognitionViewModel.translationResult.collectAsState()
+                val isTranslating by recognitionViewModel.isTranslating.collectAsState()
+                
+                // Log state changes for debugging
+                LaunchedEffect(isTranslating) {
+                    Log.i(TRANSLATION_SCREEN_TAG, "🔄 UI: isTranslating state changed to: $isTranslating")
+                }
+                LaunchedEffect(translationResult) {
+                    val result = translationResult // Store in local variable for smart cast
+                    if (result != null) {
+                        Log.i(TRANSLATION_SCREEN_TAG, "🔄 UI: translationResult state changed - sentence='${result.sentence}', source='${result.source}'")
+                    } else {
+                        Log.i(TRANSLATION_SCREEN_TAG, "🔄 UI: translationResult state changed to: null")
+                    }
+                }
+                LaunchedEffect(isScanning) {
+                    Log.i(TRANSLATION_SCREEN_TAG, "🔄 UI: isScanning state changed to: $isScanning")
+                }
             var hasCameraPermission by remember { mutableStateOf(cameraPermissionGranted) }
 
             // DEBUG: Log when UI receives recognition result updates
@@ -333,6 +422,7 @@ class TranslationActivity : ComponentActivity(), TextToSpeech.OnInitListener {
             // Track hand engine initialization state
             var handEngineInitialized by remember { mutableStateOf(handEngineReady) }
             var isInitializing by remember { mutableStateOf(handEngineInitializing) }
+            var initializationError by remember { mutableStateOf<String?>(null) }
             
             LaunchedEffect(Unit) {
                 handEngineInitializationState.collectLatest { initialized ->
@@ -341,15 +431,22 @@ class TranslationActivity : ComponentActivity(), TextToSpeech.OnInitListener {
                 }
             }
             
-            // Lite Mode toggle state
-            var liteModeEnabled by remember { mutableStateOf(PerformanceConfig.LITE_MODE_ENABLED) }
-            val analyzer = remember(hasCameraPermission, roiDetector) {
+            // Listen to initialization error state
+            LaunchedEffect(Unit) {
+                initializationErrorState.collectLatest { error ->
+                    initializationError = error
+                }
+            }
+            
+            val analyzer = remember(hasCameraPermission, roiDetector, isScanning) {
+                Log.i(TAG, "🔄 Creating new CameraBitmapAnalyzer: hasCameraPermission=$hasCameraPermission, isScanning=$isScanning")
                 val detector = roiDetector
                 CameraBitmapAnalyzer(
                     onBitmap = { bitmap ->
                         try {
-                            if (recognitionEnabled && assetsReady && handEngineReady && hasCameraPermission) {
-                                handEngine.detectAsync(bitmap)
+                            // Check isScanning to pause camera during translation
+                            if (recognitionEnabled && assetsReady && handEngineReady && hasCameraPermission && isScanning) {
+                                holisticEngine.detectAsync(bitmap)
                             }
                         } catch (error: Throwable) {
                             Log.e(HAND_TAG, "detectAsync failed", error)
@@ -362,6 +459,7 @@ class TranslationActivity : ComponentActivity(), TextToSpeech.OnInitListener {
                 ).also {
                     // Store reference for ROI coordinate mapping
                     cameraAnalyzer = it
+                    Log.i(TAG, "✅ CameraBitmapAnalyzer created and stored (isScanning=$isScanning)")
                 }
             }
             TranslationScreen(
@@ -370,6 +468,15 @@ class TranslationActivity : ComponentActivity(), TextToSpeech.OnInitListener {
                 accumulatorState = accumulatorState,
                 lastBusEvent = lastBusEvent,
                 cameraPermissionGranted = hasCameraPermission,
+                    glossList = glossList,
+                    currentTone = currentTone,
+                    isScanning = isScanning,
+                    translationResult = translationResult,
+                    isTranslating = isTranslating,
+                    onRemoveGloss = { recognitionViewModel.removeLastGloss() },
+                    onConfirmTranslation = { recognitionViewModel.confirmTranslation() },
+                    onResumeScanning = { recognitionViewModel.resumeScanning() },
+                    onSetIsScanning = { value -> recognitionViewModel.setIsScanning(value) },
                 onDevPredict = {
                     recognitionViewModel.onFeatures(RecognitionProvider.zeroFeatureVector())
                 },
@@ -417,23 +524,9 @@ class TranslationActivity : ComponentActivity(), TextToSpeech.OnInitListener {
                 },
                 cameraAnalyzer = analyzer,
                 startRecognitionEnabled = canStartRecognition && !recognitionStarted,
-                liteModeEnabled = liteModeEnabled,
-                onLiteModeToggle = {
-                    liteModeEnabled = !liteModeEnabled
-                    PerformanceConfig.LITE_MODE_ENABLED = liteModeEnabled
-                    // Persist to SharedPreferences
-                    getSharedPreferences("ExpressoraPrefs", Context.MODE_PRIVATE)
-                        .edit()
-                        .putBoolean("lite_mode_enabled", liteModeEnabled)
-                        .apply()
-                    Toast.makeText(
-                        this,
-                        if (liteModeEnabled) "Lite Mode: ON (15-30 FPS target)" else "Lite Mode: OFF",
-                        Toast.LENGTH_SHORT
-                    ).show()
-                },
                 isInitializing = isInitializing,
-                handEngineInitialized = handEngineInitialized
+                handEngineInitialized = handEngineInitialized,
+                initializationError = initializationError
             )
         }
     }
@@ -458,7 +551,7 @@ class TranslationActivity : ComponentActivity(), TextToSpeech.OnInitListener {
         // Cleanup hand landmarker engine
         if (handEngineReady) {
             try {
-                handEngine.close()
+                holisticEngine.close()
                 handEngineReady = false
             } catch (e: Exception) {
                 Log.e(TAG, "Error closing hand engine", e)
@@ -477,7 +570,7 @@ class TranslationActivity : ComponentActivity(), TextToSpeech.OnInitListener {
         recognitionEnabled = false
         
         // Clear overlay reference
-        handLandmarkOverlay = null
+        holisticLandmarkOverlay = null
         
         Log.d(TAG, "TranslationActivity destroyed, resources cleaned up")
     }
@@ -534,6 +627,9 @@ fun speakTextAloud(context: Context, tts: TextToSpeech?, text: String) {
     }
 }
 
+private const val TRANSLATION_SCREEN_TAG = "TranslationScreen"
+
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun TranslationScreen(
     glossEvent: GlossEvent,
@@ -555,13 +651,21 @@ fun TranslationScreen(
     onStartRecognition: () -> Unit = {},
     cameraAnalyzer: ImageAnalysis.Analyzer? = null,
     startRecognitionEnabled: Boolean = false,
-    liteModeEnabled: Boolean = true,
-    onLiteModeToggle: () -> Unit = {},
     isInitializing: Boolean = false,
     handEngineInitialized: Boolean = false,
+    initializationError: String? = null,
+    glossList: List<String> = emptyList(),
+    currentTone: String = "/neutral",
+    isScanning: Boolean = true,
+    translationResult: com.example.expressora.grpc.TranslationResult? = null,
+    isTranslating: Boolean = false,
+    onRemoveGloss: () -> Unit = {},
+    onConfirmTranslation: () -> Unit = {},
+    onResumeScanning: () -> Unit = {},
+    onSetIsScanning: (Boolean) -> Unit = {},
 ) {
     val context = LocalContext.current
-    var useFrontCamera by remember { mutableStateOf(false) }
+    var useFrontCamera by remember { mutableStateOf(true) } // Default to front camera
     var expanded by remember { mutableStateOf(false) }
     var showCard by remember { mutableStateOf(false) }
     var currentFps by remember { mutableStateOf(0f) }
@@ -631,8 +735,20 @@ fun TranslationScreen(
             val lifecycleOwner = context as ComponentActivity
             val previewView = remember { PreviewView(context) }
 
-            LaunchedEffect(useFrontCamera, cameraPermissionGranted) {
-                if (!cameraPermissionGranted) return@LaunchedEffect
+            LaunchedEffect(useFrontCamera, cameraPermissionGranted, isScanning) {
+                Log.i(TRANSLATION_SCREEN_TAG, "📷 LaunchedEffect triggered: useFrontCamera=$useFrontCamera, cameraPermissionGranted=$cameraPermissionGranted, isScanning=$isScanning, cameraAnalyzer=${if (cameraAnalyzer == null) "null" else "not null"}")
+                
+                if (!cameraPermissionGranted) {
+                    Log.w(TRANSLATION_SCREEN_TAG, "⚠️ Camera permission not granted - skipping camera binding")
+                    return@LaunchedEffect
+                }
+                
+                if (cameraAnalyzer == null) {
+                    Log.w(TRANSLATION_SCREEN_TAG, "⚠️ Camera analyzer is null - skipping camera binding (may be initializing)")
+                    return@LaunchedEffect
+                }
+                
+                Log.i(TRANSLATION_SCREEN_TAG, "📷 Starting camera binding process...")
                 val cameraProviderFuture = ProcessCameraProvider.getInstance(context)
                 cameraProviderFuture.addListener({
                     val cameraProvider = cameraProviderFuture.get()
@@ -648,24 +764,58 @@ fun TranslationScreen(
                             .build()
                             .also { imageAnalysis ->
                                 cameraAnalyzer?.let { analyzer ->
+                                    Log.i(TRANSLATION_SCREEN_TAG, "📷 Setting analyzer on ImageAnalysis instance (isScanning=$isScanning)")
                                     // Use optimized executor for background frame processing
                                     // Access executor via companion object since it's now internal
                                     imageAnalysis.setAnalyzer(
                                         TranslationActivity.imageAnalysisExecutor,
                                         analyzer
                                     )
+                                    Log.i(TRANSLATION_SCREEN_TAG, "✅ Analyzer set successfully")
+                                } ?: run {
+                                    Log.w(TRANSLATION_SCREEN_TAG, "⚠️ Camera analyzer is null when setting - this should not happen")
                                 }
                             }
                         val cameraSelector = if (useFrontCamera) CameraSelector.DEFAULT_FRONT_CAMERA
                         else CameraSelector.DEFAULT_BACK_CAMERA
+                        
+                        Log.i(TRANSLATION_SCREEN_TAG, "📷 Unbinding all cameras and rebinding with new analyzer...")
                         cameraProvider.unbindAll()
                         cameraProvider.bindToLifecycle(
                             lifecycleOwner, cameraSelector, preview, analysis
                         )
+                        Log.i(TRANSLATION_SCREEN_TAG, "✅ Camera successfully rebound (isScanning=$isScanning)")
                     } catch (e: Exception) {
+                        Log.e(TRANSLATION_SCREEN_TAG, "❌ Failed to bind camera: ${e.message}", e)
                         e.printStackTrace()
                     }
                 }, ContextCompat.getMainExecutor(context))
+            }
+            
+            // Lifecycle observer to stop camera scanning on pause (prevents BufferQueue errors)
+            // Do NOT unbind camera here - CameraX handles hardware shutdown automatically via bindToLifecycle
+            // Unbinding here would cause black screen when user resumes the app
+            DisposableEffect(lifecycleOwner) {
+                val observer = LifecycleEventObserver { _, event ->
+                    when (event) {
+                        Lifecycle.Event.ON_PAUSE -> {
+                            // Stop camera scanning IMMEDIATELY on pause to prevent writing to abandoned surface
+                            onSetIsScanning(false)
+                            Log.d(TRANSLATION_SCREEN_TAG, "📱 Activity paused - stopped camera scanning")
+                        }
+                        Lifecycle.Event.ON_RESUME -> {
+                            // Optional: Auto-resume scanning when app resumes
+                            // Or leave it manual (user controls via UI)
+                            Log.d(TRANSLATION_SCREEN_TAG, "📱 Activity resumed")
+                        }
+                        else -> {}
+                    }
+                }
+                lifecycleOwner.lifecycle.addObserver(observer)
+                onDispose {
+                    lifecycleOwner.lifecycle.removeObserver(observer)
+                    Log.d(TRANSLATION_SCREEN_TAG, "📱 Lifecycle observer removed")
+                }
             }
 
             // Camera preview with 4:3 aspect ratio, centered
@@ -681,10 +831,10 @@ fun TranslationScreen(
                 )
             }
             
-            // Hand landmark overlay on top of camera preview (matching 4:3 aspect ratio)
+            // Holistic landmark overlay on top of camera preview (matching 4:3 aspect ratio)
             val overlayView = remember {
-                HandLandmarkOverlay(context).also {
-                    (context as? TranslationActivity)?.setHandLandmarkOverlay(it)
+                HolisticLandmarkOverlay(context).also {
+                    (context as? TranslationActivity)?.setHolisticLandmarkOverlay(it)
                 }
             }
             
@@ -698,6 +848,449 @@ fun TranslationScreen(
                     modifier = Modifier.fillMaxSize(),
                     factory = { overlayView }
                 )
+            }
+            
+            // Gloss bar at bottom (above bottom nav) with delete buttons and tone feedback
+            if (glossList.isNotEmpty()) {
+                // Determine border color based on current tone
+                val toneBorderColor = when {
+                    currentTone.contains("question", ignoreCase = true) -> Color(0xFFFFEB3B) // Yellow
+                    currentTone.contains("angry", ignoreCase = true) || currentTone.contains("serious", ignoreCase = true) -> Color(0xFFF44336) // Red
+                    currentTone.contains("exclamation", ignoreCase = true) || currentTone.contains("happy", ignoreCase = true) -> Color(0xFF4CAF50) // Green
+                    else -> Color(0xFF2196F3) // Blue (neutral)
+                }
+                
+                Row(
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 8.dp)
+                        .padding(bottom = 80.dp) // Add bottom padding to clear camera button in bottom nav
+                        .background(
+                            Color.Black.copy(alpha = 0.7f),
+                            RoundedCornerShape(8.dp)
+                        )
+                        .border(
+                            width = 2.dp,
+                            color = toneBorderColor,
+                            shape = RoundedCornerShape(8.dp)
+                        )
+                        .padding(8.dp)
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    glossList.forEachIndexed { index, gloss ->
+                        val isLastItem = index == glossList.size - 1
+                        
+                        // Chain connector (horizontal line with arrow) before each item except the first
+                        if (index > 0) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(2.dp)
+                            ) {
+                                // Connector line
+                                Box(
+                                    modifier = Modifier
+                                        .width(10.dp)
+                                        .height(2.dp)
+                                        .background(Color.White.copy(alpha = 0.8f))
+                                )
+                                // Arrow head (right-pointing chevron using text)
+                                Text(
+                                    text = "→",
+                                    color = Color.White.copy(alpha = 0.8f),
+                                    fontSize = 12.sp,
+                                    modifier = Modifier.padding(horizontal = 2.dp)
+                                )
+                            }
+                        }
+                        
+                        // Chain link (gloss chip) - rounded pill shape
+                        Box(
+                            modifier = Modifier
+                                .background(
+                                    Color(0xFF4CAF50),
+                                    shape = RoundedCornerShape(20.dp)
+                                )
+                                .border(
+                                    width = 1.dp,
+                                    color = Color.White.copy(alpha = 0.3f),
+                                    shape = RoundedCornerShape(20.dp)
+                                )
+                                .padding(horizontal = 12.dp, vertical = 8.dp)
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Text(
+                                    text = gloss,
+                                    color = Color.White,
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    fontFamily = InterFontFamily
+                                )
+                                // Delete button (X icon) - only on last item (LIFO)
+                                if (isLastItem) {
+                                    IconButton(
+                                        onClick = onRemoveGloss,
+                                        modifier = Modifier.size(20.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Filled.Close,
+                                            contentDescription = "Delete Last",
+                                            tint = Color.White,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            
+            // Translate button (floating action button) - centered at bottom
+            if (glossList.isNotEmpty() && isScanning) {
+                FloatingActionButton(
+                    onClick = onConfirmTranslation,
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(bottom = 16.dp),
+                    containerColor = Color(0xFF2196F3)
+                ) {
+                    Text(
+                        text = "TRANSLATE",
+                        color = Color.White,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        fontFamily = InterFontFamily
+                    )
+                }
+            }
+            
+            // Translation result modal (bottom sheet) - shows loading or result with immediate animation
+            val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+            
+            // Show sheet immediately when isTranslating becomes true - use key1 for immediate trigger
+            LaunchedEffect(key1 = isTranslating) {
+                if (isTranslating) {
+                    Log.i(TRANSLATION_SCREEN_TAG, "📱 UI: Showing ModalBottomSheet immediately (isTranslating=$isTranslating)")
+                    sheetState.show()
+                } else if (translationResult == null) {
+                    sheetState.hide()
+                }
+            }
+            
+            // Also show sheet when translation result is available
+            LaunchedEffect(key1 = translationResult) {
+                val result = translationResult
+                if (result != null && !isTranslating) {
+                    Log.i(TRANSLATION_SCREEN_TAG, "📱 UI: Showing ModalBottomSheet for result")
+                    sheetState.show()
+                }
+            }
+            
+            // Always render ModalBottomSheet when needed (for immediate display)
+            if (isTranslating || translationResult != null) {
+                ModalBottomSheet(
+                    sheetState = sheetState,
+                    onDismissRequest = {
+                        Log.i(TRANSLATION_SCREEN_TAG, "📱 UI: ModalBottomSheet onDismissRequest called - isTranslating=$isTranslating")
+                        // Only allow dismissal when not translating
+                        if (!isTranslating) {
+                            Log.i(TRANSLATION_SCREEN_TAG, "✅ UI: Dismissal allowed - calling onResumeScanning()")
+                            onResumeScanning()
+                        } else {
+                            Log.w(TRANSLATION_SCREEN_TAG, "⚠️ UI: Dismissal blocked - translation in progress")
+                        }
+                    },
+                    containerColor = cardBgColor
+                ) {
+                    // Old design restored - Card-based layout with expandable design
+                    var expandedState by remember { mutableStateOf(false) }
+                    val result = translationResult
+                    
+                    if (isTranslating && result == null) {
+                        // Loading state
+                        LaunchedEffect(Unit) {
+                            Log.i(TRANSLATION_SCREEN_TAG, "📱 UI: ModalBottomSheet showing LOADING state")
+                        }
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(24.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            Text(
+                                text = "Translation",
+                                fontSize = 20.sp,
+                                fontWeight = FontWeight.Bold,
+                                fontFamily = InterFontFamily,
+                                modifier = Modifier.padding(bottom = 24.dp)
+                            )
+                            
+                            CircularProgressIndicator(
+                                modifier = Modifier.padding(bottom = 16.dp)
+                            )
+                            
+                            Text(
+                                text = "Translating...",
+                                fontSize = 16.sp,
+                                color = Color.DarkGray,
+                                fontFamily = InterFontFamily
+                            )
+                        }
+                    } else if (result != null) {
+                        // Result state - using old Card design with tone indicator and bilingual support
+                        val englishText = result.sentence
+                        val filipinoText = result.sentenceFilipino.ifEmpty { result.sentence } // Fallback to English if Filipino not available
+                        val resultTone = result.tone.ifEmpty { "/neutral" }
+                        val displayText = if (selectedLanguage == "English") englishText else filipinoText
+                        
+                        // Determine tone color
+                        val toneColor = when {
+                            resultTone.contains("question", ignoreCase = true) -> Color(0xFFFFEB3B) // Yellow
+                            resultTone.contains("angry", ignoreCase = true) || resultTone.contains("serious", ignoreCase = true) -> Color(0xFFF44336) // Red
+                            resultTone.contains("exclamation", ignoreCase = true) || resultTone.contains("happy", ignoreCase = true) -> Color(0xFF4CAF50) // Green
+                            else -> Color(0xFF2196F3) // Blue (neutral)
+                        }
+                        
+                        LaunchedEffect(result) {
+                            Log.i(TRANSLATION_SCREEN_TAG, "📱 UI: ModalBottomSheet showing RESULT state - English='$englishText', Filipino='$filipinoText', tone='$resultTone', source='${result.source}'")
+                        }
+                        
+                        Card(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(if (expandedState) 300.dp else 160.dp),
+                            shape = RoundedCornerShape(12.dp),
+                            colors = CardDefaults.cardColors(containerColor = cardBgColor),
+                            elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
+                        ) {
+                            Box(modifier = Modifier.fillMaxSize()) {
+                                if (!expandedState) {
+                                    Column(
+                                        modifier = Modifier
+                                            .fillMaxSize()
+                                            .padding(horizontal = 24.dp, vertical = 16.dp),
+                                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        // Tone indicator badge
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                        ) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .background(toneColor, RoundedCornerShape(4.dp))
+                                                    .padding(horizontal = 8.dp, vertical = 4.dp)
+                                            ) {
+                                                Text(
+                                                    text = resultTone,
+                                                    fontSize = 12.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = Color.White,
+                                                    fontFamily = InterFontFamily
+                                                )
+                                            }
+                                        }
+                                        
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.SpaceBetween
+                                        ) {
+                                            Column(modifier = Modifier.weight(1f)) {
+                                                Text(
+                                                    text = selectedLanguage,
+                                                    fontWeight = FontWeight.Bold,
+                                                    fontSize = 16.sp,
+                                                    color = Color.Black,
+                                                    fontFamily = InterFontFamily
+                                                )
+                                                Spacer(modifier = Modifier.height(6.dp))
+                                                Text(
+                                                    text = displayText,
+                                                    fontWeight = FontWeight.Normal,
+                                                    fontSize = 16.sp,
+                                                    color = Color.Black,
+                                                    fontFamily = InterFontFamily
+                                                )
+                                            }
+                                            IconButton(onClick = { if (ttsReady) speakText(displayText) }) {
+                                                Icon(
+                                                    imageVector = Icons.Filled.VolumeUp,
+                                                    contentDescription = "Sound",
+                                                    tint = Color.Black,
+                                                    modifier = Modifier.size(30.dp)
+                                                )
+                                            }
+                                        }
+                                    }
+                                } else {
+                                    Column(
+                                        modifier = Modifier
+                                            .fillMaxSize()
+                                            .padding(horizontal = 24.dp, vertical = 16.dp),
+                                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                                    ) {
+                                        // Tone indicator badge
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                        ) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .background(toneColor, RoundedCornerShape(4.dp))
+                                                    .padding(horizontal = 8.dp, vertical = 4.dp)
+                                            ) {
+                                                Text(
+                                                    text = resultTone,
+                                                    fontSize = 12.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = Color.White,
+                                                    fontFamily = InterFontFamily
+                                                )
+                                            }
+                                        }
+                                        
+                                        // Show languages based on selectedLanguage (selected language on top)
+                                        val topLang = selectedLanguage
+                                        val bottomLang = if (selectedLanguage == "English") "Filipino" else "English"
+                                        val topText = if (selectedLanguage == "English") englishText else filipinoText
+                                        val bottomText = if (selectedLanguage == "English") filipinoText else englishText
+                                        
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.SpaceBetween
+                                        ) {
+                                            Column(modifier = Modifier.weight(1f)) {
+                                                Text(
+                                                    text = topLang,
+                                                    fontWeight = FontWeight.Bold,
+                                                    fontSize = 14.sp,
+                                                    color = Color.Black,
+                                                    fontFamily = InterFontFamily
+                                                )
+                                                Spacer(modifier = Modifier.height(6.dp))
+                                                Text(
+                                                    text = topText,
+                                                    fontWeight = FontWeight.Normal,
+                                                    fontSize = 14.sp,
+                                                    color = Color.Black,
+                                                    fontFamily = InterFontFamily
+                                                )
+                                            }
+                                            IconButton(onClick = { if (ttsReady) speakText(topText) }) {
+                                                Icon(
+                                                    imageVector = Icons.Filled.VolumeUp,
+                                                    contentDescription = "Top Sound",
+                                                    tint = Color.Black,
+                                                    modifier = Modifier.size(28.dp)
+                                                )
+                                            }
+                                        }
+
+                                        Box(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(vertical = 4.dp),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .height(1.dp)
+                                                    .background(Color.Gray)
+                                            )
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(35.dp)
+                                                    .clip(CircleShape)
+                                                    .background(Color(0xFFFACC15)),
+                                                contentAlignment = Alignment.Center
+                                            ) {
+                                                IconButton(onClick = {
+                                                    onLanguageChanged(if (selectedLanguage == "English") "Filipino" else "English")
+                                                }) {
+                                                    Icon(
+                                                        imageVector = Icons.Filled.SwapCalls,
+                                                        contentDescription = "Swap Languages",
+                                                        tint = Color.Black,
+                                                        modifier = Modifier.size(28.dp)
+                                                    )
+                                                }
+                                            }
+                                        }
+
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.SpaceBetween
+                                        ) {
+                                            Column(modifier = Modifier.weight(1f)) {
+                                                Text(
+                                                    text = bottomLang,
+                                                    fontWeight = FontWeight.Bold,
+                                                    fontSize = 14.sp,
+                                                    color = Color.Black,
+                                                    fontFamily = InterFontFamily
+                                                )
+                                                Spacer(modifier = Modifier.height(6.dp))
+                                                Text(
+                                                    text = bottomText,
+                                                    fontWeight = FontWeight.Normal,
+                                                    fontSize = 14.sp,
+                                                    color = Color.Black,
+                                                    fontFamily = InterFontFamily
+                                                )
+                                            }
+                                            IconButton(onClick = { if (ttsReady) speakText(bottomText) }) {
+                                                Icon(
+                                                    imageVector = Icons.Filled.VolumeUp,
+                                                    contentDescription = "Bottom Sound",
+                                                    tint = Color.Black,
+                                                    modifier = Modifier.size(28.dp)
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+
+                                IconButton(
+                                    onClick = { expandedState = !expandedState },
+                                    modifier = Modifier
+                                        .align(Alignment.BottomStart)
+                                        .padding(start = 8.dp, bottom = 8.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = if (expandedState) Icons.Filled.CloseFullscreen else Icons.Filled.OpenInFull,
+                                        contentDescription = if (expandedState) "Collapse" else "Expand",
+                                        tint = Color.Black,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                }
+                                
+                                // Done button in bottom right
+                                Button(
+                                    onClick = onResumeScanning,
+                                    modifier = Modifier
+                                        .align(Alignment.BottomEnd)
+                                        .padding(end = 8.dp, bottom = 8.dp)
+                                ) {
+                                    Text(
+                                        text = "Done",
+                                        fontSize = 14.sp,
+                                        fontFamily = InterFontFamily
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
             }
 
             // Recognition overlay - ALWAYS VISIBLE (top-left: status + label + FPS)
@@ -714,13 +1307,18 @@ fun TranslationScreen(
                             modifier = Modifier
                                 .size(8.dp)
                                 .background(
-                                    if (recognitionResult != null) Color(0xFF4CAF50) else Color(0xFFFFA726),
+                                    when {
+                                        initializationError != null -> Color.Red
+                                        recognitionResult != null -> Color(0xFF4CAF50)
+                                        else -> Color(0xFFFFA726)
+                                    },
                                     CircleShape
                                 )
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
                             text = when {
+                                initializationError != null -> "Error: ${initializationError?.take(30)}..."
                                 isInitializing -> "Initializing models..."
                                 !handEngineInitialized -> "Loading engine..."
                                 recognitionResult != null -> "Recognizing"
@@ -728,7 +1326,7 @@ fun TranslationScreen(
                             },
                             fontSize = 12.sp,
                             fontWeight = FontWeight.SemiBold,
-                            color = Color.DarkGray,
+                            color = if (initializationError != null) Color.Red else Color.DarkGray,
                             fontFamily = InterFontFamily
                         )
                     }
@@ -806,6 +1404,19 @@ fun TranslationScreen(
                         fontFamily = InterFontFamily
                     )
                     Spacer(modifier = Modifier.height(4.dp))
+                    
+                    // Show initialization error if present
+                    if (initializationError != null) {
+                        Text(
+                            text = "ERROR: ${initializationError}",
+                            fontSize = 10.sp,
+                            color = Color.Red,
+                            fontFamily = InterFontFamily,
+                            maxLines = 3
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                    }
+                    
                     Text(
                         text = "MP Frames: ${com.example.expressora.recognition.mediapipe.HandLandmarkerEngine.framesProcessed.get()}",
                         fontSize = 10.sp,
@@ -983,24 +1594,6 @@ fun TranslationScreen(
                     )
                 }
                 
-                // Lite Mode toggle
-                IconButton(
-                    onClick = onLiteModeToggle,
-                    modifier = Modifier
-                        .size(48.dp)
-                        .background(
-                            if (liteModeEnabled) Color(0xE64CAF50) else Color(0xE6FF9800),
-                            CircleShape
-                        )
-                ) {
-                    Text(
-                        text = if (liteModeEnabled) "L" else "H",
-                        fontSize = 18.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = Color.White,
-                        fontFamily = InterFontFamily
-                    )
-                }
             }
 
             // Control buttons (Backspace, Clear, Send) - COMMENTED OUT
@@ -1098,8 +1691,10 @@ fun TranslationScreen(
             }
             */
             
+            // OLD TRANSLATION BOX - COMMENTED OUT (user wants translation only when clicking "Translate")
+            /*
             AnimatedVisibility(
-                visible = showCard, enter = slideInVertically(
+                visible = showCard && translationResult == null, enter = slideInVertically(
                     initialOffsetY = { it }, animationSpec = tween(600)
                 ), exit = slideOutVertically(
                     targetOffsetY = { it }, animationSpec = tween(400)
@@ -1136,13 +1731,18 @@ fun TranslationScreen(
                                             fontFamily = InterFontFamily
                                         )
                                         Spacer(modifier = Modifier.height(6.dp))
-                                        Text(
-                                            text = topText,
-                                            fontWeight = FontWeight.Normal,
-                                            fontSize = 16.sp,
-                                            color = Color.Black,
-                                            fontFamily = InterFontFamily
-                                        )
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                        ) {
+                                            Text(
+                                                text = topText,
+                                                fontWeight = FontWeight.Normal,
+                                                fontSize = 16.sp,
+                                                color = Color.Black,
+                                                fontFamily = InterFontFamily
+                                            )
+                                        }
                                     }
                                     IconButton(onClick = { if (ttsReady) speakText(topText) }) {
                                         Icon(
@@ -1174,13 +1774,18 @@ fun TranslationScreen(
                                                 fontFamily = InterFontFamily
                                             )
                                             Spacer(modifier = Modifier.height(6.dp))
-                                            Text(
-                                                text = topText,
-                                                fontWeight = FontWeight.Normal,
-                                                fontSize = 14.sp,
-                                                color = Color.Black,
-                                                fontFamily = InterFontFamily
-                                            )
+                                            Row(
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                            ) {
+                                                Text(
+                                                    text = topText,
+                                                    fontWeight = FontWeight.Normal,
+                                                    fontSize = 14.sp,
+                                                    color = Color.Black,
+                                                    fontFamily = InterFontFamily
+                                                )
+                                            }
                                         }
                                         IconButton(onClick = { if (ttsReady) speakText(topText) }) {
                                             Icon(
@@ -1280,6 +1885,7 @@ fun TranslationScreen(
                     }
                 }
             }
+            */
 
             // Start Recognition button - COMMENTED OUT (auto-starts now)
             /*
@@ -1331,6 +1937,8 @@ fun TranslationScreenPreview() {
         onStartRecognition = {},
         startRecognitionEnabled = false,
         isInitializing = false,
-        handEngineInitialized = false
+        handEngineInitialized = false,
+        initializationError = null,
+        onSetIsScanning = {}
     )
 }

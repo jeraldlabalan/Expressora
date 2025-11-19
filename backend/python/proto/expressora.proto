@@ -1,0 +1,48 @@
+syntax = "proto3";
+
+package expressora;
+
+// Service definition for bidirectional streaming and translation
+service TranslationService {
+    // 1. Streaming: Returns "GLOSS" (word) or "TONE" (context) events. Stateless.
+    rpc StreamLandmarks(stream LandmarkFrame) returns (stream RecognitionEvent);
+    
+    // 2. Unary: Client sends the final list to get the sentence.
+    rpc TranslateSequence(GlossSequence) returns (TranslationResult);
+}
+
+// Landmark frame containing hands, face, and pose coordinates
+message LandmarkFrame {
+    // Flattened arrays: x,y,z coordinates for each landmark
+    repeated float hands = 1;    // x,y,z flattened for all hand landmarks
+    repeated float face = 2;     // x,y,z flattened for all face landmarks
+    repeated float pose = 3;     // x,y,z flattened for all pose landmarks
+    int64 timestamp = 4;         // Timestamp in milliseconds
+}
+
+// Recognition event for streaming (replaces TranslationEvent for streaming)
+message RecognitionEvent {
+    enum Type {
+        GLOSS = 0;      // A single recognized sign (e.g., "HELLO")
+        TONE = 1;       // Facial tone detected (e.g., "/question", "/serious")
+        HANDS_DOWN = 2; // Hands down detected (informational only)
+    }
+    
+    Type type = 1;         // Event type
+    string label = 2;      // The content (gloss label or tone tag)
+    float confidence = 3;  // Confidence score [0.0, 1.0]
+}
+
+// Gloss sequence for translation request
+message GlossSequence {
+    repeated string glosses = 1;    // List of gloss labels
+    string dominant_tone = 2;       // The tone detected during the sequence (e.g., "/question")
+}
+
+// Translation result from TranslateSequence
+message TranslationResult {
+    string sentence = 1;            // Translated English sentence
+    string sentence_filipino = 2;    // Translated Filipino sentence
+    string tone = 3;                // Tone used in translation (e.g., "/question", "/neutral")
+    string source = 4;               // Translation source (e.g., "Cloud (Gemini)" or "Offline (Local)")
+}
