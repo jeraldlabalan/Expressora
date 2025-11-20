@@ -21,6 +21,8 @@ import com.example.expressora.recognition.model.TopPrediction
 import com.example.expressora.recognition.model.FeatureVectorStats
 import com.example.expressora.recognition.persistence.SequenceHistoryRepository
 import com.example.expressora.recognition.tflite.TfLiteRecognitionEngine
+import com.example.expressora.recognition.feature.LandmarkFeatureExtractor
+import com.example.expressora.recognition.feature.MotionVarianceDetector
 import com.google.mediapipe.tasks.vision.holisticlandmarker.HolisticLandmarkerResult
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
@@ -84,9 +86,24 @@ class RecognitionViewModel(
     private val _isTranslating = MutableStateFlow<Boolean>(false)
     val isTranslating: StateFlow<Boolean> = _isTranslating.asStateFlow()
     
+    // Trigger Discipline: Time-based restrictions to prevent spam detection
+    private var lastDetectedGloss: String? = null
+    private var lastDetectionTime: Long = 0L
+    private val smoothedConfidenceMap = java.util.concurrent.ConcurrentHashMap<String, Float>()
+    
+    companion object {
+        private const val MAX_SENTENCE_LENGTH = 7
+        private const val SAME_SIGN_COOLDOWN_MS = 1500L // 1.5s for same sign
+        private const val TRANSITION_COOLDOWN_MS = 600L  // 0.6s between different signs
+        private const val MIN_SMOOTHED_CONFIDENCE = 0.65f // Threshold after smoothing
+    }
+    
     // Accumulator
     private val accumulator = SequenceAccumulator(viewModelScope)
     val accumulatorState: StateFlow<AccumulatorState> = accumulator.state
+    
+    // Variance detector for pre-filtering noise before sending to server (optional bandwidth optimization)
+    private val varianceDetector = MotionVarianceDetector(bufferSize = 10, varianceThreshold = 0.01f)
     
     // History repository
     private val historyRepository = SequenceHistoryRepository(context)
@@ -110,6 +127,20 @@ class RecognitionViewModel(
     init {
         LogUtils.d(TAG) { "Initializing RecognitionViewModel (useOnlineMode=$useOnlineMode)" }
         
+        // CRITICAL: Observe accumulator state and sync to UI in real-time
+        // Accumulator is the SINGLE SOURCE OF TRUTH - all modifications must go through it
+        viewModelScope.launch {
+            accumulatorState.collect { state ->
+                // Always mirror the accumulator's tokens to the UI
+                // Use direct assignment (not update) since accumulator is the source of truth
+                val oldTokens = _glossList.value
+                _glossList.value = state.tokens
+                if (oldTokens != state.tokens) {
+                    LogUtils.i(TAG) { "🔄🔄🔄 UI Synced to Accumulator: ${oldTokens.size} -> ${state.tokens.size} items, tokens=[${state.tokens.joinToString(", ")}]" }
+                }
+            }
+        }
+        
         if (useOnlineMode && streamer != null) {
             // Online mode: Use gRPC streaming
             LogUtils.d(TAG) { "Using ONLINE mode with gRPC streaming" }
@@ -120,7 +151,30 @@ class RecognitionViewModel(
                 // Listen to recognition events (GLOSS, TONE, HANDS_DOWN)
                 streamer.recognitionEvents.collect { event ->
                     LogUtils.d(TAG) { "Recognition event received: type=${event.type}, label='${event.label}', confidence=${event.confidence}" }
-                    processRecognitionEvent(event)
+                    
+                    when (event.type) {
+                        RecognitionEvent.Type.GLOSS -> {
+                            LogUtils.d(TAG) { "📥 Server sent GLOSS: '${event.label}' (conf=${event.confidence}) - Using single-shot (instant but safe)" }
+                            
+                            // Server responses are already validated (multi-frame validation on server)
+                            // Use single-shot method: instant acceptance but debounces duplicates
+                            accumulator.onSingleShotResult(event.label)
+                            
+                            LogUtils.d(TAG) { "✅ Token processed via single-shot, current tokens: ${accumulatorState.value.tokens.size}" }
+                        }
+                        RecognitionEvent.Type.TONE -> {
+                            // Handle tone events (if needed)
+                            LogUtils.d(TAG) { "Tone detected: ${event.label}" }
+                        }
+                        RecognitionEvent.Type.HANDS_DOWN -> {
+                            // Reset accumulator when hands are down
+                            accumulator.clear()
+                        }
+                        else -> {
+                            // Handle any unrecognized types (e.g., UNRECOGNIZED from protobuf)
+                            LogUtils.w(TAG) { "Unrecognized event type: ${event.type}" }
+                        }
+                    }
                 }
                 
                 // Listen to connection state
@@ -189,6 +243,10 @@ class RecognitionViewModel(
         accumulator.onSequenceCommitted = { tokens ->
             viewModelScope.launch {
                 LogUtils.d(TAG) { "Sequence committed: tokens=[${tokens.joinToString()}]" }
+                
+                // NOTE: _glossList is automatically synced by the state observer in init
+                // No need to manually update it here - accumulator state observer handles UI updates
+                
                 // Gather origin and confidence from last recognition result
                 val lastResult = _recognitionResult.value
                 val origin = lastResult?.originLabel ?: "UNKNOWN"
@@ -353,28 +411,93 @@ class RecognitionViewModel(
         imageWidth: Int,
         imageHeight: Int
     ) = viewModelScope.launch {
-        // Check if scanning is paused (during translation)
-        if (!_isScanning.value) {
-            return@launch // Skip processing while translation result is showing
-        }
-        
-        if (useOnlineMode && streamer != null) {
+        try {
+            // Check if scanning is paused (during translation)
+            val isScanning = _isScanning.value
+            if (!isScanning) {
+                LogUtils.v(TAG) { "⏸️ Skipping frame - scanning paused (isScanning=false)" }
+                return@launch // Skip processing while translation result is showing
+            }
+            
+            if (useOnlineMode && streamer != null) {
             // Additional safety check: verify connection is ready before sending
-            if (!streamer.isConnected()) {
-                LogUtils.d(TAG) { "⚠️ Skipping frame send - stream not connected yet (waiting for connection)" }
+            val isConnected = streamer.isConnected()
+            if (!isConnected) {
+                LogUtils.d(TAG) { "⚠️ Skipping frame send - stream not connected yet (waiting for connection). isConnected=$isConnected" }
                 return@launch
             }
             
-            // MediaPipe Holistic uses leftHandLandmarks() and rightHandLandmarks()
-            val leftHand = result.leftHandLandmarks()
-            val rightHand = result.rightHandLandmarks()
-            val numHands = (if (leftHand != null && leftHand.isNotEmpty()) 1 else 0) + 
-                          (if (rightHand != null && rightHand.isNotEmpty()) 1 else 0)
-            LogUtils.d(TAG) { "📤 Sending landmarks to gRPC server: hands=$numHands, " +
-                    "face=${result.faceLandmarks()?.size ?: 0}" }
+            // Optional: Variance pre-filter to skip noise frames (bandwidth optimization)
+            val leftHandLandmarks = result.leftHandLandmarks()
+            val rightHandLandmarks = result.rightHandLandmarks()
+            val wristX = leftHandLandmarks?.get(0)?.x() ?: rightHandLandmarks?.get(0)?.x()
+            val wristY = leftHandLandmarks?.get(0)?.y() ?: rightHandLandmarks?.get(0)?.y()
+            
+            if (wristX != null && wristY != null) {
+                varianceDetector.addWristPosition(wristX, wristY)
+                
+                // Only send if variance indicates meaningful motion (skip noise)
+                if (varianceDetector.hasEnoughData()) {
+                    val variance = varianceDetector.getVariance()
+                    if (variance < 0.001f) {
+                        // Very low variance = static/noise, skip sending
+                        LogUtils.v(TAG) { "Skipping frame: low variance ($variance) - likely noise" }
+                        return@launch
+                    }
+                }
+            }
+            
+            // RESTORE: Stream skeleton to Python server for recognition
             streamer.sendLandmarks(result, timestampMs, imageWidth, imageHeight)
         } else {
-            Log.w(TAG, "onLandmarks called but not in online mode or streamer not available")
+            // OFFLINE MODE: Process landmarks locally using TfLiteRecognitionEngine
+            if (engine == null) {
+                Log.w(TAG, "onLandmarks called in offline mode but engine not available")
+                return@launch
+            }
+            
+            // Process on background thread to avoid blocking
+            withContext(Dispatchers.Default) {
+                try {
+                    // Extract hand landmarks from HolisticLandmarkerResult
+                    val leftHandLandmarks = result.leftHandLandmarks()
+                    val rightHandLandmarks = result.rightHandLandmarks()
+                    
+                    val hasLeftHand = leftHandLandmarks != null && leftHandLandmarks.isNotEmpty()
+                    val hasRightHand = rightHandLandmarks != null && rightHandLandmarks.isNotEmpty()
+                    
+                    if (!hasLeftHand && !hasRightHand) {
+                        LogUtils.v(TAG) { "⏸️ No hands detected in offline mode, skipping" }
+                        return@withContext
+                    }
+                    
+                    // Convert NormalizedLandmark to Point3
+                    val leftPoints = leftHandLandmarks?.map { landmark ->
+                        LandmarkFeatureExtractor.Point3(landmark.x(), landmark.y(), landmark.z())
+                    }
+                    val rightPoints = rightHandLandmarks?.map { landmark ->
+                        LandmarkFeatureExtractor.Point3(landmark.x(), landmark.y(), landmark.z())
+                    }
+                    
+                    // Create Hands object and convert to feature vector
+                    // Always use two-hand format (126 dims) - missing hands are zero-padded by extractor
+                    // The twoHands parameter is deprecated but kept for API compatibility
+                    val hands = HandToFeaturesBridge.Hands(left = leftPoints, right = rightPoints)
+                    val featureVector = HandToFeaturesBridge.toVec(hands, twoHands = true)
+                    
+                    // Pass feature vector to engine for classification
+                    engine.onLandmarks(featureVector)
+                    
+                    LogUtils.v(TAG) { "✅ Offline recognition: processed ${featureVector.size}D features (left=${hasLeftHand}, right=${hasRightHand})" }
+                } catch (e: Exception) {
+                    Log.e(TAG, "❌ Error processing landmarks in offline mode", e)
+                }
+            }
+            }
+        } catch (e: Exception) {
+            // Prevent app crash if server disconnects or network error occurs
+            LogUtils.e(TAG) { "⚠️ Error in onLandmarks (server likely disconnected): ${e.message}" }
+            // Don't rethrow - allow app to continue functioning
         }
     }
     
@@ -410,51 +533,99 @@ class RecognitionViewModel(
             RecognitionEvent.Type.GLOSS -> {
                 // Move heavy list processing to background thread to prevent UI lag
                 viewModelScope.launch(Dispatchers.Default) {
+                    val currentTime = System.currentTimeMillis()
                     val newGloss = event.label
+                    val rawConfidence = event.confidence
                     val currentList = _glossList.value
                     
-                    // Heavy processing on background thread (duplicate checking, list operations)
-                    if (currentList.isEmpty() || currentList.last() != newGloss) {
-                        val updatedList = currentList + newGloss
-                        val newListSize = updatedList.size
-                        
-                        LogUtils.d(TAG) { "✅ GLOSS event: '$newGloss' (confidence: ${event.confidence}, list size: $newListSize)" }
-                        
-                        // Convert to RecognitionResult for UI compatibility
-                        val recognitionResult = RecognitionResult(
-                            glossLabel = newGloss,
-                            glossConf = event.confidence,
-                            glossIndex = 0,
-                            originLabel = null,
-                            originConf = null,
-                            timestamp = System.currentTimeMillis(),
-                            debugInfo = DebugInfo(
-                                featureVectorStats = FeatureVectorStats(
-                                    size = 0,
-                                    expectedSize = 0,
-                                    nonZeroCount = 0,
-                                    min = 0f,
-                                    max = 0f,
-                                    mean = 0f,
-                                    isAllZeros = false,
-                                    hasNaN = false
-                                ),
-                                rawLogits = listOf(TopPrediction(0, newGloss, event.confidence)),
-                                softmaxProbs = listOf(TopPrediction(0, newGloss, event.confidence)),
-                                averagedLogits = null
-                            )
-                        )
-                        
-                        // Emit to UI on main thread (atomic update)
-                        withContext(Dispatchers.Main) {
-                            _glossList.value = updatedList
-                            processRecognitionResult(recognitionResult)
-                            
-                            // Auto-translate removed: Users should manually trigger translation
-                            // to review and delete incorrect glosses before translating
+                    // --- STEP 1: ALWAYS SMOOTH CONFIDENCE FIRST (Fixes the "Stale Math" bug) ---
+                    // We process the math regardless of whether we show the sign yet
+                    // This keeps the EMA accurate during cooldown periods
+                    val prevSmoothed = smoothedConfidenceMap[newGloss] ?: rawConfidence
+                    val smoothedScore = (rawConfidence * 0.7f) + (prevSmoothed * 0.3f)
+                    smoothedConfidenceMap[newGloss] = smoothedScore
+                    LogUtils.d(TAG) { "📊 Confidence smoothing: '$newGloss' raw=$rawConfidence, prevSmoothed=$prevSmoothed, smoothed=$smoothedScore" }
+                    
+                    // Optional: If the smoothed score is too low, ignore it immediately
+                    // This filters out "flickering" weak detections
+                    if (smoothedScore < MIN_SMOOTHED_CONFIDENCE) {
+                        LogUtils.v(TAG) { "🚫 GLOSS filtered (low smoothed confidence): '$newGloss' (raw: $rawConfidence, smoothed: $smoothedScore < $MIN_SMOOTHED_CONFIDENCE)" }
+                        return@launch
+                    }
+                    
+                    // --- STEP 2: SENTENCE CAP CHECK ---
+                    if (currentList.size >= MAX_SENTENCE_LENGTH) {
+                        LogUtils.d(TAG) { "🚫 GLOSS rejected (sentence limit reached): '$newGloss' (list size: ${currentList.size} >= $MAX_SENTENCE_LENGTH)" }
+                        return@launch
+                    }
+                    
+                    // --- STEP 3: TRANSITION COOLDOWN (Global) ---
+                    // Prevent any new sign if we JUST added one (prevents rapid-fire errors)
+                    if (currentTime - lastDetectionTime < TRANSITION_COOLDOWN_MS) {
+                        val remainingMs = TRANSITION_COOLDOWN_MS - (currentTime - lastDetectionTime)
+                        LogUtils.v(TAG) { "🚫 GLOSS rejected (transition cooldown): '$newGloss' (${remainingMs}ms remaining, lastDetectionTime=$lastDetectionTime, currentTime=$currentTime)" }
+                        return@launch
+                    }
+                    LogUtils.d(TAG) { "✅ Transition cooldown passed: '$newGloss' (timeSinceLast=${currentTime - lastDetectionTime}ms >= ${TRANSITION_COOLDOWN_MS}ms)" }
+                    
+                    // --- STEP 4: SAME-SIGN DEBOUNCE ---
+                    // If it's the same sign, require a long pause (1.5s)
+                    if (newGloss == lastDetectedGloss) {
+                        if (currentTime - lastDetectionTime < SAME_SIGN_COOLDOWN_MS) {
+                            val remainingMs = SAME_SIGN_COOLDOWN_MS - (currentTime - lastDetectionTime)
+                            LogUtils.v(TAG) { "🚫 GLOSS rejected (same-sign cooldown): '$newGloss' (${remainingMs}ms remaining, lastDetectedGloss='$lastDetectedGloss')" }
+                            return@launch
                         }
+                        LogUtils.d(TAG) { "✅ Same-sign cooldown passed: '$newGloss' (timeSinceLast=${currentTime - lastDetectionTime}ms >= ${SAME_SIGN_COOLDOWN_MS}ms)" }
                     } else {
-                        LogUtils.d(TAG) { "Skipping duplicate gloss: '$newGloss'" }
+                        LogUtils.d(TAG) { "✅ Different sign detected: '$newGloss' (was '$lastDetectedGloss')" }
+                    }
+                    
+                    // --- STEP 5: COMMIT ---
+                    // If we passed all guards, accept the sign
+                    LogUtils.d(TAG) { "📝 Before StateFlow update: currentList.size=${currentList.size}, newGloss='$newGloss'" }
+                    lastDetectedGloss = newGloss
+                    lastDetectionTime = currentTime
+                    
+                    LogUtils.d(TAG) { "✅ GLOSS accepted: '$newGloss' (raw: $rawConfidence, smoothed: $smoothedScore)" }
+                    
+                    // Convert to RecognitionResult for UI compatibility
+                    val recognitionResult = RecognitionResult(
+                        glossLabel = newGloss,
+                        glossConf = smoothedScore, // Use smoothed confidence for UI
+                        glossIndex = 0,
+                        originLabel = null,
+                        originConf = null,
+                        timestamp = currentTime,
+                        debugInfo = DebugInfo(
+                            featureVectorStats = FeatureVectorStats(
+                                size = 0,
+                                expectedSize = 0,
+                                nonZeroCount = 0,
+                                min = 0f,
+                                max = 0f,
+                                mean = 0f,
+                                isAllZeros = false,
+                                hasNaN = false
+                            ),
+                            rawLogits = listOf(TopPrediction(0, newGloss, rawConfidence)),
+                            softmaxProbs = listOf(TopPrediction(0, newGloss, smoothedScore)),
+                            averagedLogits = null
+                        )
+                    )
+                    
+                    // Emit to UI on main thread (atomic update using StateFlow.update for guaranteed recomposition)
+                    withContext(Dispatchers.Main) {
+                        _glossList.update { currentList ->
+                            val oldSize = currentList.size
+                            val newList = currentList + newGloss
+                            Log.d(TAG, "✅ Gloss list updated: oldSize=$oldSize -> newSize=${newList.size}, items=[${newList.joinToString(", ")}]")
+                            newList
+                        }
+                        processRecognitionResult(recognitionResult)
+                        
+                        // Auto-translate removed: Users should manually trigger translation
+                        // to review and delete incorrect glosses before translating
                     }
                 }
             }
@@ -463,7 +634,7 @@ class RecognitionViewModel(
                 // Tone updates are lightweight, but still use atomic update
                 val tone = event.label
                 _currentTone.value = tone
-                LogUtils.d(TAG) { "😊 TONE event: '$tone' (confidence: ${event.confidence})" }
+                LogUtils.d(TAG) { "😊 TONE event processed: '$tone' (confidence: ${event.confidence}) - NOT triggering translation (manual only)" }
             }
             
             RecognitionEvent.Type.HANDS_DOWN -> {
@@ -483,21 +654,27 @@ class RecognitionViewModel(
      * Since gloss sequence order matters, users can only delete the most recently added gloss.
      */
     fun removeLastGloss() {
-        val currentList = _glossList.value
-        if (currentList.isNotEmpty()) {
-            val removedGloss = currentList.last()
-            _glossList.value = currentList.dropLast(1)
-            LogUtils.d(TAG) { "✅ Removed last gloss (LIFO): '$removedGloss' (list size: ${_glossList.value.size})" }
-        } else {
-            LogUtils.d(TAG) { "⚠️ Cannot remove gloss - list is empty" }
-        }
+        // Remove from the accumulator. The observer in init will 
+        // automatically see this change and update _glossList.
+        accumulator.backspace()
+        LogUtils.d(TAG) { "✅ Removed last gloss via accumulator.backspace()" }
     }
     
     /**
      * Confirm translation: pause camera, disconnect stream, call TranslateSequence, show result.
      */
     fun confirmTranslation() {
-        Log.i(TAG, "🔄 confirmTranslation() called")
+        // Stack trace logging to identify callers
+        val stackTrace = Thread.currentThread().stackTrace.take(5).joinToString("\n") { 
+            "  at ${it.className}.${it.methodName}(${it.fileName}:${it.lineNumber})"
+        }
+        Log.i(TAG, "🔄 confirmTranslation() called from:\n$stackTrace")
+        
+        // Guard check to prevent translation if already translating
+        if (_isTranslating.value) {
+            Log.w(TAG, "⚠️ confirmTranslation() called while already translating - ignoring")
+            return
+        }
         
         if (!useOnlineMode || streamer == null) {
             Log.w(TAG, "❌ Cannot translate: not in online mode or streamer not available (useOnlineMode=$useOnlineMode, streamer=${if (streamer == null) "null" else "not null"})")
@@ -532,11 +709,13 @@ class RecognitionViewModel(
                 Log.i(TAG, "✅ gRPC stream stopped (channel kept alive for blocking call)")
                 
                 val tone = _currentTone.value
-                Log.i(TAG, "📞 Step 4/5: Calling TranslateSequence: ${glosses.size} glosses, tone=$tone")
+                // Get origin from last recognition result (for code-switching support)
+                val origin = _recognitionResult.value?.originLabel
+                Log.i(TAG, "📞 Step 4/5: Calling TranslateSequence: ${glosses.size} glosses, tone=$tone, origin=$origin")
                 
-                // Call translation service
+                // Call translation service with origin for code-switching support
                 val startTime = System.currentTimeMillis()
-                val result = streamer.translateSequence(glosses, tone)
+                val result = streamer.translateSequence(glosses, tone, origin)
                 val duration = System.currentTimeMillis() - startTime
                 
                 Log.i(TAG, "⏱️ TranslateSequence completed in ${duration}ms")
@@ -575,9 +754,12 @@ class RecognitionViewModel(
         Log.i(TAG, "🔄 resumeScanning() called")
         Log.i(TAG, "📊 Current state before resume: glossList.size=${_glossList.value.size}, translationResult=${if (_translationResult.value == null) "null" else "not null"}, isScanning=${_isScanning.value}, isTranslating=${_isTranslating.value}")
         
-        Log.i(TAG, "🧹 Step 1/4: Clearing gloss list")
+        Log.i(TAG, "🧹 Step 1/4: Clearing gloss list and resetting trigger discipline state")
         _glossList.value = emptyList()
-        Log.i(TAG, "✅ Gloss list cleared: size=${_glossList.value.size}")
+        lastDetectedGloss = null
+        lastDetectionTime = 0L
+        smoothedConfidenceMap.clear()
+        Log.i(TAG, "✅ Gloss list cleared: size=${_glossList.value.size}, trigger discipline state reset")
         
         Log.i(TAG, "🧹 Step 2/4: Clearing translation result")
         _translationResult.value = null

@@ -10,30 +10,22 @@ object LandmarkFeatureExtractor {
     fun toFeatureVector(
         left: List<Point3>?,
         right: List<Point3>?,
-        twoHands: Boolean,
+        twoHands: Boolean, // Deprecated: kept for API compatibility but ignored - always returns 126 dims
     ): FloatArray {
         // DEBUG: Log input parameters
-        Log.v(TAG, "toFeatureVector: twoHands=$twoHands, left=${left?.size ?: 0}, right=${right?.size ?: 0}")
+        Log.v(TAG, "toFeatureVector: twoHands=$twoHands (ignored), left=${left?.size ?: 0}, right=${right?.size ?: 0}")
         
-        return if (twoHands) {
-            FloatArray(TWO_HAND_DIM).also { output ->
-                fill(output, 0, left, "left")
-                fill(output, HALF_DIM, right, "right")
-                
-                // DEBUG: Log filled result
-                val leftFilled = output.slice(0 until HALF_DIM).count { it != 0f }
-                val rightFilled = output.slice(HALF_DIM until TWO_HAND_DIM).count { it != 0f }
-                Log.d(TAG, "Two-hand vector: totalSize=$TWO_HAND_DIM, leftFilled=$leftFilled, rightFilled=$rightFilled")
-            }
-        } else {
-            val hand = left ?: right
-            FloatArray(ONE_HAND_DIM).also { output ->
-                fill(output, 0, hand, "single")
-                
-                // DEBUG: Log filled result
-                val filled = output.count { it != 0f }
-                Log.d(TAG, "One-hand vector: totalSize=$ONE_HAND_DIM, filled=$filled")
-            }
+        // ALWAYS return 126 dimensions (TWO_HAND_DIM) to match model input shape [1, 126]
+        // Missing hands are automatically zero-padded: fill() returns early if points is null, leaving zeros
+        // FloatArray initializes to 0.0f by default, so null hands result in zero-filled slots
+        return FloatArray(TWO_HAND_DIM).also { output ->
+            fill(output, 0, left, "left")      // First 63: left hand (or zeros if null)
+            fill(output, HALF_DIM, right, "right") // Last 63: right hand (or zeros if null)
+            
+            // DEBUG: Log filled result
+            val leftFilled = output.slice(0 until HALF_DIM).count { it != 0f }
+            val rightFilled = output.slice(HALF_DIM until TWO_HAND_DIM).count { it != 0f }
+            Log.d(TAG, "Feature vector: totalSize=$TWO_HAND_DIM, leftFilled=$leftFilled, rightFilled=$rightFilled")
         }
     }
 

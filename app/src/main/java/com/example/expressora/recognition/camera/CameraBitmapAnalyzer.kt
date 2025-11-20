@@ -17,7 +17,7 @@ import com.example.expressora.recognition.utils.LogUtils
 import java.io.ByteArrayOutputStream
 
 class CameraBitmapAnalyzer(
-    private val onBitmap: (Bitmap) -> Unit,
+    private val onFrameProcessed: (Bitmap, Long) -> Unit,
     private val frameSkip: Int = PerformanceConfig.BASE_FRAME_SKIP,
     private val roiDetector: HandRoiDetector? = null
 ) : ImageAnalysis.Analyzer {
@@ -37,6 +37,18 @@ class CameraBitmapAnalyzer(
     private val bitmapPool = mutableListOf<Bitmap>()
     private val maxPoolSize = PerformanceConfig.BITMAP_POOL_SIZE
     
+    // Canvas-based bitmap reuse: persistent bitmap and matrix to eliminate per-frame allocations
+    private var reusedBitmap: Bitmap? = null
+    private val frameMatrix = Matrix()
+    
+    // Performance monitoring: track bitmap reuse and frame processing time
+    private var bitmapAllocations = 0
+    private var bitmapReuses = 0
+    private var lastPerformanceLogTime = 0L
+    private val PERFORMANCE_LOG_INTERVAL_MS = 5000L  // Log every 5 seconds
+    private var totalFrameProcessingTime = 0L
+    private var frameProcessingCount = 0
+    
     // ROI offset for coordinate mapping (stored per frame)
     @Volatile
     private var currentRoiOffset: Rect? = null
@@ -54,7 +66,12 @@ class CameraBitmapAnalyzer(
     private var currentProcessedHeight: Int = 0
 
     override fun analyze(image: ImageProxy) {
+        val frameStartTime = System.currentTimeMillis()
+        // Capture timestamp from image metadata (source of truth for synchronization)
+        val timestamp = image.imageInfo.timestamp
         try {
+            // Process death safety: ImageProxy will throw if already closed, so we catch in finally
+            
             // Set background thread priority for better performance on low-end devices
             Process.setThreadPriority(Process.THREAD_PRIORITY_BACKGROUND)
             
@@ -91,18 +108,63 @@ class CameraBitmapAnalyzer(
                 Log.d(TAG, "📷 Processing frame #$frameCounter @ ${System.currentTimeMillis()}")
             }
             
-            val bitmap = image.toBitmapDirect() ?: return
-            val rotated = rotateBitmap(bitmap, image.imageInfo.rotationDegrees)
+            val sourceBitmap = image.toBitmapDirect() ?: return
+            
+            // Canvas-based bitmap reuse: calculate rotated dimensions and reuse persistent bitmap
+            val rotationDegrees = image.imageInfo.rotationDegrees
+            val isPortrait = rotationDegrees == 90 || rotationDegrees == 270
+            val targetWidth = if (isPortrait) image.height else image.width
+            val targetHeight = if (isPortrait) image.width else image.height
+            
+            // Only allocate a new Bitmap if:
+            // 1. It doesn't exist yet (first frame)
+            // 2. The camera resolution changed (rare)
+            if (reusedBitmap == null || 
+                reusedBitmap!!.width != targetWidth || 
+                reusedBitmap!!.height != targetHeight
+            ) {
+                Log.i(TAG, "📷 Allocating new Bitmap buffer: $targetWidth x $targetHeight")
+                reusedBitmap?.recycle() // Clean up old one if it exists
+                reusedBitmap = Bitmap.createBitmap(
+                    targetWidth, 
+                    targetHeight, 
+                    Bitmap.Config.ARGB_8888
+                )
+                bitmapAllocations++
+            } else {
+                bitmapReuses++
+            }
+            
+            // Prepare the Transformation Matrix
+            // Reset and configure rotation/scale to map the camera frame to our bitmap
+            frameMatrix.reset()
+            
+            // Move origin to center to rotate
+            frameMatrix.postTranslate(-image.width / 2f, -image.height / 2f)
+            frameMatrix.postRotate(rotationDegrees.toFloat())
+            
+            // Move back to top-left after rotation, accounting for new dimensions
+            frameMatrix.postTranslate(targetWidth / 2f, targetHeight / 2f)
+            
+            // The "Zero-Allocation" Draw
+            // Instead of creating a new bitmap, we DRAW the source onto our persistent 'reusedBitmap'
+            val canvas = Canvas(reusedBitmap!!)
+            canvas.drawBitmap(sourceBitmap, frameMatrix, null)
+            
+            // Return source bitmap to pool (it's temporary from CameraX)
+            returnBitmapToPool(sourceBitmap)
+            
+            // Store full image dimensions for coordinate mapping
+            fullImageWidth = reusedBitmap!!.width
+            fullImageHeight = reusedBitmap!!.height
+            
+            val rotated = reusedBitmap!! // Use the reused bitmap as the rotated result
             
             // NOTE: We do NOT horizontally flip/mirror the image before sending to MediaPipe.
             // The bitmap orientation matches the actual camera view (not mirrored).
             // MediaPipe's handedness labels are reversed relative to the person's actual hands,
             // so we handle the reversal in HandToFeaturesBridge mapping logic instead.
             // This ensures consistent behavior for both front and rear cameras.
-            
-            // Store full image dimensions for coordinate mapping
-            fullImageWidth = rotated.width
-            fullImageHeight = rotated.height
             
             // ROI detection and cropping
             val roiRect = if (roiDetector != null && PerformanceConfig.ROI_ENABLED && roiDetector.isAvailable()) {
@@ -111,8 +173,11 @@ class CameraBitmapAnalyzer(
                 null
             }
             
+            // ROI detection and cropping
+            // Note: ROI cropping still creates a new bitmap, but this is acceptable since ROI is optional
+            // and typically only used when hand detection is struggling. The main rotation path is optimized.
             val finalBitmap = if (roiRect != null && roiRect.width() >= 50 && roiRect.height() >= 50) {
-                // Crop to ROI
+                // Crop to ROI (creates new bitmap, but ROI is optional/rare)
                 try {
                     val cropped = Bitmap.createBitmap(
                         rotated,
@@ -121,7 +186,8 @@ class CameraBitmapAnalyzer(
                         roiRect.width(),
                         roiRect.height()
                     )
-                    returnBitmapToPool(rotated)
+                    // Note: We don't return rotated to pool here because it's the reusedBitmap
+                    // The cropped bitmap will be recycled by the callback if needed
                     currentRoiOffset = roiRect
                     LogUtils.debugIfVerbose(TAG) { "📷 ROI cropped: ${roiRect.width()}x${roiRect.height()} from ${rotated.width}x${rotated.height}" }
                     cropped
@@ -149,13 +215,47 @@ class CameraBitmapAnalyzer(
             currentProcessedWidth = processedBitmap.width
             currentProcessedHeight = processedBitmap.height
             
-            // Pass bitmap to callback for processing
-            LogUtils.debugIfVerbose(TAG) { "📷 Frame converted to bitmap: ${processedBitmap.width}x${processedBitmap.height}, calling onBitmap callback" }
-            onBitmap(processedBitmap)
+            // Pass bitmap and timestamp to callback for processing
+            // IMPORTANT: We pass the persistent 'reusedBitmap' (or cropped copy), NOT a new object.
+            // The callback should NOT recycle this bitmap if it's the reused one.
+            // The timestamp is from image.imageInfo.timestamp (source of truth for synchronization)
+            LogUtils.debugIfVerbose(TAG) { "📷 Frame converted to bitmap: ${processedBitmap.width}x${processedBitmap.height}, timestamp=$timestamp, calling onFrameProcessed callback" }
+            onFrameProcessed(processedBitmap, timestamp)
+            
+            // Performance monitoring: track frame processing time
+            val frameProcessingTime = System.currentTimeMillis() - frameStartTime
+            totalFrameProcessingTime += frameProcessingTime
+            frameProcessingCount++
+            
+            // Log performance metrics periodically
+            val currentTime = System.currentTimeMillis()
+            if (currentTime - lastPerformanceLogTime > PERFORMANCE_LOG_INTERVAL_MS) {
+                val avgProcessingTime = totalFrameProcessingTime / frameProcessingCount.toFloat()
+                val reuseRate = if (bitmapAllocations + bitmapReuses > 0) {
+                    (bitmapReuses * 100f / (bitmapAllocations + bitmapReuses))
+                } else {
+                    0f
+                }
+                Log.i(TAG, "📊 Performance: avgFrameTime=${String.format("%.1f", avgProcessingTime)}ms, " +
+                        "bitmapReuseRate=${String.format("%.1f", reuseRate)}%, " +
+                        "allocations=$bitmapAllocations, reuses=$bitmapReuses")
+                
+                // Reset counters
+                totalFrameProcessingTime = 0L
+                frameProcessingCount = 0
+                lastPerformanceLogTime = currentTime
+            }
         } catch (error: Throwable) {
             Log.e(TAG, "❌ Frame analysis error: ${error.message}", error)
         } finally {
-            image.close()
+            // Process death safety: gracefully handle ImageProxy closure during camera halt
+            // ImageProxy.close() may throw if already closed, so wrap in try-catch
+            try {
+                image.close()
+            } catch (e: Exception) {
+                // Image may have been closed by another thread or during camera halt
+                Log.w(TAG, "⚠️ Error closing ImageProxy (may be already closed): ${e.message}")
+            }
         }
     }
     
@@ -187,6 +287,11 @@ class CameraBitmapAnalyzer(
         }
     }
 
+    /**
+     * Legacy rotateBitmap method - kept for compatibility but no longer used.
+     * Rotation is now handled via Canvas-based reuse in analyze() method.
+     */
+    @Deprecated("Use Canvas-based reuse pattern in analyze() instead")
     private fun rotateBitmap(bitmap: Bitmap, rotationDegrees: Int): Bitmap {
         if (rotationDegrees == 0) {
             return bitmap

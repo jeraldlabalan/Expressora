@@ -22,6 +22,7 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.launch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import kotlin.random.Random
 
 class LandmarkStreamer(
     private val context: Context,
@@ -32,7 +33,14 @@ class LandmarkStreamer(
     companion object {
         private const val TAG = "LandmarkStreamer"
         private const val CONNECTION_TIMEOUT_SECONDS = 10L
-        private const val THROTTLE_INTERVAL_MS = 55L // ~18 FPS (1000ms / 18 ≈ 55ms)
+        private const val THROTTLE_INTERVAL_MS = 42L // ~24 FPS (1000ms / 24 ≈ 42ms) - OPTIMIZED for better responsiveness
+        
+        // Exponential backoff constants
+        private const val MAX_RETRY_ATTEMPTS = 5
+        private const val BASE_BACKOFF_MS = 1000L
+        private const val MAX_BACKOFF_MS = 30000L
+        private const val SUSTAINED_CONNECTION_MS = 10000L // 10 seconds - only reset retry counter after sustained connection
+        private const val MIN_TIME_BETWEEN_ATTEMPTS_MS = 5000L // 5 seconds minimum between connection attempts
     }
     
     private var channel: ManagedChannel? = null
@@ -42,6 +50,11 @@ class LandmarkStreamer(
     
     private val isConnected = AtomicBoolean(false)
     private val isConnecting = AtomicBoolean(false)
+    
+    // Exponential backoff state
+    private var retryAttempt = 0
+    private var connectionStartTime = 0L
+    private var lastConnectionAttemptTime = 0L
     
     // Throttling: track last send time
     private var lastSendTime = 0L
@@ -68,6 +81,20 @@ class LandmarkStreamer(
         Log.i(TAG, "🔌 connect() called")
         Log.i(TAG, "📊 Current state: isConnecting=${isConnecting.get()}, isConnected=${isConnected.get()}, channel=${if (channel == null) "null" else "alive"}")
         
+        // Check minimum time between connection attempts
+        val now = System.currentTimeMillis()
+        val timeSinceLastAttempt = now - lastConnectionAttemptTime
+        if (lastConnectionAttemptTime > 0 && timeSinceLastAttempt < MIN_TIME_BETWEEN_ATTEMPTS_MS) {
+            val remainingMs = MIN_TIME_BETWEEN_ATTEMPTS_MS - timeSinceLastAttempt
+            Log.w(TAG, "⚠️ Too soon to reconnect (${timeSinceLastAttempt}ms < ${MIN_TIME_BETWEEN_ATTEMPTS_MS}ms). Waiting ${remainingMs}ms...")
+            scope.launch {
+                kotlinx.coroutines.delay(remainingMs)
+                connect()
+            }
+            return
+        }
+        lastConnectionAttemptTime = now
+        
         // Check if already connecting or connected with active stream
         if (isConnecting.get() || (isConnected.get() && requestObserver != null)) {
             Log.w(TAG, "⚠️ Already connecting or connected with active stream - skipping connection")
@@ -90,11 +117,12 @@ class LandmarkStreamer(
             
             if (channel == null || isChannelShutdown) {
                 Log.i(TAG, "📡 Creating new channel (existing=${channel != null}, shutdown=$isChannelShutdown)")
-                // Create new channel
+                // Create new channel with extended KeepAlive to prevent "Too Many Pings" errors
+                // Use 5 minutes (300 seconds) to be safe, or at least 30 seconds minimum
                 channel = ManagedChannelBuilder.forAddress(serverHost, serverPort)
                     .usePlaintext() // For development - use TLS in production
-                    .keepAliveTime(30, TimeUnit.SECONDS)
-                    .keepAliveTimeout(5, TimeUnit.SECONDS)
+                    .keepAliveTime(5, TimeUnit.MINUTES) // Extended to 5 minutes to prevent KeepAlive frame spam
+                    .keepAliveTimeout(10, TimeUnit.SECONDS)
                     .keepAliveWithoutCalls(true)
                     .build()
                 
@@ -123,7 +151,7 @@ class LandmarkStreamer(
             // Create response observer for RecognitionEvent
             val responseObserver = object : StreamObserver<RecognitionEvent> {
                 override fun onNext(event: RecognitionEvent) {
-                    Log.d(TAG, "Received recognition event: type=${event.type}, label='${event.label}', confidence=${event.confidence}")
+                    Log.i(TAG, "📥 Received recognition event from server: type=${event.type}, label='${event.label}', confidence=${event.confidence}")
                     scope.launch {
                         _recognitionEvents.emit(event)
                     }
@@ -133,12 +161,32 @@ class LandmarkStreamer(
                     Log.e(TAG, "gRPC stream error: ${t.message}", t)
                     isConnected.set(false)
                     isConnecting.set(false)
+                    
+                    // Check if we should retry (exponential backoff)
+                    if (retryAttempt >= MAX_RETRY_ATTEMPTS) {
+                        Log.e(TAG, "❌ Max retry attempts ($MAX_RETRY_ATTEMPTS) reached. Stopping retries.")
+                        scope.launch {
+                            _connectionState.emit(ConnectionState.ERROR)
+                        }
+                        return
+                    }
+                    
+                    // Calculate exponential backoff with jitter
+                    // Formula: baseDelay * 2^retryAttempt, capped at MAX_BACKOFF_MS
+                    val baseDelay = minOf(BASE_BACKOFF_MS * (1 shl retryAttempt), MAX_BACKOFF_MS)
+                    val jitter = (baseDelay * 0.2 * Random.nextDouble()).toLong() // 0-20% jitter
+                    val delayMs = baseDelay + jitter
+                    
+                    retryAttempt++
+                    Log.w(TAG, "🔄 Retry attempt $retryAttempt/$MAX_RETRY_ATTEMPTS: Will retry after ${delayMs}ms (base: ${baseDelay}ms + jitter: ${jitter}ms)")
+                    
                     scope.launch {
                         _connectionState.emit(ConnectionState.ERROR)
                     }
-                    // Attempt reconnection after delay
+                    
+                    // Attempt reconnection after exponential backoff delay
                     scope.launch {
-                        kotlinx.coroutines.delay(2000)
+                        kotlinx.coroutines.delay(delayMs)
                         reconnect()
                     }
                 }
@@ -167,16 +215,31 @@ class LandmarkStreamer(
             // Create request observer (bidirectional streaming)
             Log.i(TAG, "📡 Creating request observer for bidirectional streaming...")
             requestObserver = stub!!.streamLandmarks(responseObserver)
-            Log.i(TAG, "✅ Request observer created")
+            Log.i(TAG, "✅ Request observer created - ready to send landmark frames")
+            
+            // Log that we're ready to send frames
+            Log.i(TAG, "🚀 Stream initialized - client can now send landmark frames to server")
             
             Log.i(TAG, "✅ Step 1/2: Setting isConnected = true, isConnecting = false")
             isConnected.set(true)
             isConnecting.set(false)
-            Log.i(TAG, "✅ State updated: isConnected=${isConnected.get()}, isConnecting=${isConnecting.get()}")
+            connectionStartTime = System.currentTimeMillis()
+            lastConnectionAttemptTime = connectionStartTime
+            Log.i(TAG, "✅ State updated: isConnected=${isConnected.get()}, isConnecting=${isConnecting.get()}, connectionStartTime=$connectionStartTime")
             
             scope.launch {
                 Log.i(TAG, "📡 Step 2/2: Emitting CONNECTED state")
                 _connectionState.emit(ConnectionState.CONNECTED)
+            }
+            
+            // Check if connection has been sustained for >10 seconds, then reset retry counter
+            // This prevents "flapping" connections from resetting the backoff counter
+            scope.launch {
+                kotlinx.coroutines.delay(SUSTAINED_CONNECTION_MS + 1000) // Wait 11 seconds to be safe
+                if (isConnected.get() && (System.currentTimeMillis() - connectionStartTime) >= SUSTAINED_CONNECTION_MS) {
+                    retryAttempt = 0
+                    Log.i(TAG, "✅ Connection sustained for >${SUSTAINED_CONNECTION_MS}ms - resetting retry counter to 0")
+                }
             }
             
             Log.i(TAG, "🎉 ✓ Connected to gRPC server successfully")
@@ -198,17 +261,19 @@ class LandmarkStreamer(
         imageWidth: Int,
         imageHeight: Int
     ) {
-        if (!isConnected.get()) {
-            Log.w(TAG, "Not connected, cannot send landmarks")
+        val connected = isConnected.get()
+        if (!connected) {
+            Log.w(TAG, "❌ Not connected, cannot send landmarks. isConnected=$connected")
             return
         }
         
-        // Throttle to ~18 FPS
+        // Throttle to ~24 FPS (THROTTLE_INTERVAL_MS = 42ms)
         val now = System.currentTimeMillis()
-        if (now - lastSendTime < THROTTLE_INTERVAL_MS) {
+        val timeSinceLastSend = now - lastSendTime
+        if (timeSinceLastSend < THROTTLE_INTERVAL_MS) {
             // Log throttled frames occasionally for debugging
             if ((now / 1000) % 5 == 0L) { // Log every 5 seconds
-                Log.v(TAG, "⏸️ Frame throttled (throttle interval: ${THROTTLE_INTERVAL_MS}ms)")
+                Log.v(TAG, "⏸️ Frame throttled: ${timeSinceLastSend}ms < ${THROTTLE_INTERVAL_MS}ms")
             }
             return // Skip this frame
         }
@@ -216,9 +281,11 @@ class LandmarkStreamer(
         
         val observer = requestObserver
         if (observer == null) {
-            Log.w(TAG, "Request observer not initialized")
+            Log.e(TAG, "❌ Request observer is null - cannot send landmarks. Stream may not be initialized.")
             return
         }
+        
+        Log.d(TAG, "✅ Pre-flight checks passed: connected=$connected, observer=${if (observer != null) "not null" else "null"}, timeSinceLastSend=${timeSinceLastSend}ms")
         
         try {
             val landmarkFrame = LandmarkConverter.toLandmarkFrame(
@@ -229,13 +296,16 @@ class LandmarkStreamer(
             )
             
             // Log frame details for debugging
-            val handCount = result.leftHandLandmarks()?.size ?: 0 + (result.rightHandLandmarks()?.size ?: 0)
+            val leftHandCount = result.leftHandLandmarks()?.size ?: 0
+            val rightHandCount = result.rightHandLandmarks()?.size ?: 0
+            val handCount = leftHandCount + rightHandCount
             val faceCount = result.faceLandmarks()?.size ?: 0
             val poseCount = result.poseLandmarks()?.size ?: 0
             
-            Log.v(TAG, "📤 Sending landmark frame: hands=$handCount, face=$faceCount, pose=$poseCount, timestamp=$timestampMs")
+            Log.i(TAG, "📤 Sending landmark frame to server: hands=$handCount (L=$leftHandCount, R=$rightHandCount), face=$faceCount, pose=$poseCount, timestamp=$timestampMs")
             
             observer.onNext(landmarkFrame)
+            Log.d(TAG, "✅ Landmark frame sent successfully via observer.onNext()")
         } catch (e: Exception) {
             Log.e(TAG, "Failed to send landmark frame: ${e.message}", e)
         }
@@ -244,13 +314,23 @@ class LandmarkStreamer(
     /**
      * Translate a sequence of glosses using the unary TranslateSequence RPC.
      * 
+     * **Translation System Prompt:**
+     * The server-side translation service should use an enhanced system prompt that includes:
+     * - ASL Topic-Comment structure guidance
+     * - FSL syntax patterns and grammar rules
+     * - Code-switching handling instructions
+     * - Question formation rules for both languages
+     * 
+     * See TRANSLATION_SYSTEM_PROMPT.md for the complete recommended prompt template.
+     * 
      * @param glosses List of gloss labels to translate
      * @param tone Dominant tone tag (e.g., "/question", "/neutral")
+     * @param origin Origin language tag (e.g., "ASL", "FSL") - optional, for code-switching support
      * @return TranslationResult containing the translated sentence and source
      * @throws Exception if translation fails or not connected
      */
-    suspend fun translateSequence(glosses: List<String>, tone: String): TranslationResult {
-        Log.i(TAG, "📞 translateSequence() called: ${glosses.size} glosses, tone=$tone")
+    suspend fun translateSequence(glosses: List<String>, tone: String, origin: String? = null): TranslationResult {
+        Log.i(TAG, "📞 translateSequence() called: ${glosses.size} glosses, tone=$tone, origin=$origin")
         Log.i(TAG, "📋 Glosses: ${glosses.joinToString(", ")}")
         
         // Allow blocking calls even if stream is stopped (channel and blockingStub remain alive)
@@ -265,11 +345,30 @@ class LandmarkStreamer(
         
         return try {
             Log.i(TAG, "📦 Building GlossSequence request...")
-            val request = GlossSequence.newBuilder()
+            val requestBuilder = GlossSequence.newBuilder()
                 .addAllGlosses(glosses)
                 .setDominantTone(tone)
-                .build()
-            Log.i(TAG, "✅ Request built: ${glosses.size} glosses, tone=$tone")
+            
+            // Add origin if provided and proto supports it
+            // Note: If GlossSequence proto doesn't have an origin field, this will be a no-op
+            // Server-side should be updated to include origin field in GlossSequence proto
+            origin?.let { originValue ->
+                try {
+                    // Try to set origin field if it exists in the proto
+                    // This uses reflection to safely attempt setting the field
+                    val setOriginMethod = requestBuilder.javaClass.getMethod("setOrigin", String::class.java)
+                    setOriginMethod.invoke(requestBuilder, originValue)
+                    Log.i(TAG, "✅ Origin set in request: $originValue")
+                } catch (e: NoSuchMethodException) {
+                    Log.w(TAG, "⚠️ GlossSequence proto does not have origin field - server-side update needed for code-switching support")
+                    Log.w(TAG, "⚠️ Origin value '$originValue' will not be sent to translation service")
+                } catch (e: Exception) {
+                    Log.w(TAG, "⚠️ Failed to set origin field: ${e.message}")
+                }
+            }
+            
+            val request = requestBuilder.build()
+            Log.i(TAG, "✅ Request built: ${glosses.size} glosses, tone=$tone, origin=$origin")
             
             Log.i(TAG, "📡 Calling blocking stub.translateSequence()...")
             val startTime = System.currentTimeMillis()

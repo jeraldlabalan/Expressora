@@ -286,9 +286,9 @@ object PerformanceConfig {
         ),
         Mode.BALANCED to Preset(
             label = "Balanced",
-            camera = CameraSettings(width = 480, height = 360, keepOnlyLatest = true),
+            camera = CameraSettings(width = 320, height = 240, keepOnlyLatest = true),  // Optimized: matches MediaPipe's internal input size (256x256 or 192x192)
             frame = FrameProcessingSettings(
-                baseFrameSkip = 2,
+                baseFrameSkip = 2,  // KEEP: Process every 2nd frame to prevent thermal throttling
                 targetFps = 18,
                 adaptiveSkipEnabled = true,
                 adaptiveSkipUpdateInterval = 30,
@@ -305,7 +305,7 @@ object PerformanceConfig {
                 handPresenceConfidence = 0.60f,
                 handTrackingConfidence = 0.60f,
                 minHandConfidenceFilter = 0.65f,
-                handDetectionCadence = 5,
+                handDetectionCadence = 1,  // OPTIMIZED: Remove cadence throttling - let MediaPipe's tracking handle efficiency
                 handSmoothingWindow = 4,
                 trackingDriftThreshold = 4,
                 enableMotionDetection = true,
