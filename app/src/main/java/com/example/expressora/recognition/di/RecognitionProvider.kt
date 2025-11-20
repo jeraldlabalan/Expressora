@@ -220,7 +220,7 @@ object RecognitionProvider {
      */
     fun provideViewModelFactory(context: Context): RecognitionViewModelFactory {
         val prefs = context.getSharedPreferences("expressora_prefs", Context.MODE_PRIVATE)
-        val useOnlineMode = prefs.getBoolean("use_online_mode", true) // Default to online
+        val useOnlineMode = true // Re-enabled: Use server-side recognition (gRPC streaming)
         
         Log.d(TAG, "Creating ViewModelFactory: useOnlineMode=$useOnlineMode")
         

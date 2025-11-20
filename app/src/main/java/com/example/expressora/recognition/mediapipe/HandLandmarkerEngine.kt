@@ -74,7 +74,8 @@ class HandLandmarkerEngine(
         
         val delegateType = selectDelegate()
         delegateUsed = delegateType
-        runningMode = selectRunningMode()
+        // Use LIVE_STREAM mode for all devices (CameraX handles device-specific quirks)
+        runningMode = RunningMode.LIVE_STREAM
 
         // Build base options - MediaPipe will automatically select GPU if available
         // We've already checked GPU support in selectDelegate(), so MediaPipe's auto-selection
@@ -227,16 +228,6 @@ class HandLandmarkerEngine(
         lastHandsDetected = handsCurrentlyDetected
     }
 
-    private fun selectRunningMode(): RunningMode {
-        val isKnownLiveStreamCrashDevice =
-            Build.MANUFACTURER.equals("vivo", ignoreCase = true) &&
-            Build.MODEL.equals("V2318", ignoreCase = true)
-        return if (isKnownLiveStreamCrashDevice) {
-            RunningMode.VIDEO
-        } else {
-            RunningMode.LIVE_STREAM
-        }
-    }
 
     private fun handleResult(result: HandLandmarkerResult) {
         resultsReceived.incrementAndGet()
@@ -349,11 +340,10 @@ class HandLandmarkerEngine(
     private fun selectDelegate(): DelegateType {
         val compatibilityList = runCatching { CompatibilityList() }.getOrNull()
         val gpuSupported = compatibilityList?.isDelegateSupportedOnThisDevice == true
-        val isKnownBadGpuDevice =
-            Build.MANUFACTURER.equals("vivo", ignoreCase = true)
-                    || Build.BRAND.equals("vivo", ignoreCase = true)
 
-        return if (gpuSupported && !isKnownBadGpuDevice) {
+        // Use GPU if supported, otherwise fallback to CPU
+        // CameraX and MediaPipe handle device-specific quirks automatically
+        return if (gpuSupported) {
             DelegateType.GPU
         } else {
             DelegateType.CPU

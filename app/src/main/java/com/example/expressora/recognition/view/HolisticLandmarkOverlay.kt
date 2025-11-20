@@ -12,8 +12,8 @@ import com.google.mediapipe.tasks.components.containers.NormalizedLandmark
 import com.google.mediapipe.tasks.vision.holisticlandmarker.HolisticLandmarkerResult
 
 /**
- * Custom view to draw holistic landmarks (hands, face, pose) on top of camera preview.
- * Shows visual feedback of detected hands, face, and pose with landmarks and connections.
+ * Custom view to draw holistic landmarks (hands, face) on top of camera preview.
+ * Shows visual feedback of detected hands and face with landmarks and connections.
  * Throttles redraws to MAX_OVERLAY_FPS (default 15 Hz) to reduce UI thread load.
  */
 class HolisticLandmarkOverlay @JvmOverloads constructor(
@@ -25,15 +25,26 @@ class HolisticLandmarkOverlay @JvmOverloads constructor(
     init {
         // Enable hardware acceleration for smoother rendering
         setLayerType(LAYER_TYPE_HARDWARE, null)
+        // Make overlay transparent so camera preview shows through
+        setBackgroundColor(android.graphics.Color.TRANSPARENT)
+        // Ensure view is visible
+        visibility = VISIBLE
     }
 
     private var holisticResult: HolisticLandmarkerResult? = null
     private var imageWidth = 0
     private var imageHeight = 0
+    private var lastInferenceTime: Long = 0L  // Timestamp when inference completed
     
     // Throttling to limit redraw rate
     private var lastRedrawTime = 0L
     private val minRedrawIntervalMs = (1000f / PerformanceConfig.MAX_OVERLAY_FPS).toLong()
+    private val STALE_DATA_THRESHOLD_MS = 5000L  // Increased from 1000ms to 5000ms to survive device freezes (1.4s+)
+    
+    // Performance monitoring
+    private var drawCount = 0
+    private var lastPerformanceLogTime = 0L
+    private val PERFORMANCE_LOG_INTERVAL_MS = 5000L  // Log every 5 seconds
     
     // Paint objects for drawing
     private val handLandmarkPaint = Paint().apply {
@@ -58,18 +69,6 @@ class HolisticLandmarkOverlay @JvmOverloads constructor(
         isAntiAlias = true
         style = Paint.Style.STROKE
         strokeWidth = 1f
-    }
-    
-    private val poseLandmarkPaint = Paint().apply {
-        isAntiAlias = true
-        style = Paint.Style.FILL
-        strokeWidth = 2f
-    }
-    
-    private val poseConnectionPaint = Paint().apply {
-        isAntiAlias = true
-        style = Paint.Style.STROKE
-        strokeWidth = 3f
     }
     
     // Hand landmark connections (MediaPipe standard - 21 points)
@@ -119,29 +118,34 @@ class HolisticLandmarkOverlay @JvmOverloads constructor(
         Pair(61, 146), Pair(146, 91), Pair(91, 181), Pair(181, 84), Pair(84, 17), Pair(17, 314), Pair(314, 405), Pair(405, 320), Pair(320, 307), Pair(307, 375), Pair(375, 321), Pair(321, 308), Pair(308, 324), Pair(324, 318), Pair(318, 61)
     )
     
-    // Pose landmark connections (MediaPipe Pose - 33 points)
-    private val poseConnections = listOf(
-        // Face
-        Pair(0, 1), Pair(0, 2), Pair(1, 3), Pair(2, 4), // Eyes and ears
-        // Upper body
-        Pair(11, 12), // Shoulders
-        Pair(11, 13), Pair(13, 15), // Left arm
-        Pair(12, 14), Pair(14, 16), // Right arm
-        // Torso
-        Pair(11, 23), Pair(12, 24), // Shoulders to hips
-        Pair(23, 24), // Hips
-        // Lower body
-        Pair(23, 25), Pair(25, 27), // Left leg
-        Pair(24, 26), Pair(26, 28), // Right leg
-        // Feet
-        Pair(27, 29), Pair(29, 31), // Left foot
-        Pair(28, 30), Pair(30, 32)  // Right foot
-    )
-    
     /**
      * Update the holistic landmarks to display
+     * @param result The holistic landmarker result
+     * @param imageWidth Image width
+     * @param imageHeight Image height
+     * @param inferenceTime Timestamp when inference completed (in milliseconds)
      */
-    fun setHolisticLandmarks(result: HolisticLandmarkerResult?, imageWidth: Int, imageHeight: Int) {
+    fun setHolisticLandmarks(
+        result: HolisticLandmarkerResult?, 
+        imageWidth: Int, 
+        imageHeight: Int,
+        inferenceTime: Long = System.currentTimeMillis()
+    ) {
+        val currentTime = System.currentTimeMillis()
+        
+        // If the inference result is older than 1 second, ignore it.
+        // Otherwise, draw it (even if it's 500ms old, it's better than a blank screen).
+        if (result != null && (currentTime - inferenceTime) > STALE_DATA_THRESHOLD_MS) {
+            Log.v("HolisticLandmarkOverlay", "Discarding stale overlay data: age=${currentTime - inferenceTime}ms > ${STALE_DATA_THRESHOLD_MS}ms")
+            return
+        }
+        
+        // Log when valid data is received (for debugging)
+        if (result != null) {
+            val age = currentTime - inferenceTime
+            Log.v("HolisticLandmarkOverlay", "✅ Overlay data accepted: age=${age}ms, hands=${result.leftHandLandmarks()?.size ?: 0}L/${result.rightHandLandmarks()?.size ?: 0}R")
+        }
+        
         val now = System.currentTimeMillis()
         val timeSinceLastRedraw = now - lastRedrawTime
         
@@ -154,13 +158,22 @@ class HolisticLandmarkOverlay @JvmOverloads constructor(
             this.holisticResult = result
             this.imageWidth = imageWidth
             this.imageHeight = imageHeight
+            this.lastInferenceTime = inferenceTime
             lastRedrawTime = now
-            invalidate()
+            // Use postInvalidate() ensures the redraw happens on the next UI frame
+            postInvalidate()
         } else if (landmarksChanged) {
             // Landmarks changed but throttled - just update state without redrawing
             this.holisticResult = result
             this.imageWidth = imageWidth
             this.imageHeight = imageHeight
+            this.lastInferenceTime = inferenceTime
+            Log.v("HolisticLandmarkOverlay", "Landmarks updated but throttled (will redraw on next interval)")
+        } else if (result == null) {
+            // Explicitly clear when result is null
+            this.holisticResult = null
+            this.lastInferenceTime = 0L
+            postInvalidate()  // Clear the overlay
         }
     }
     
@@ -176,14 +189,41 @@ class HolisticLandmarkOverlay @JvmOverloads constructor(
         super.onDraw(canvas)
         
         val result = holisticResult ?: return
-        if (imageWidth == 0 || imageHeight == 0) return
+        if (imageWidth == 0 || imageHeight == 0) {
+            Log.v("HolisticLandmarkOverlay", "Skipping draw: imageWidth=$imageWidth, imageHeight=$imageHeight")
+            return
+        }
+        
+        // Additional check: if data is stale, don't draw
+        val currentTime = System.currentTimeMillis()
+        val dataAge = if (lastInferenceTime > 0) currentTime - lastInferenceTime else 0L
+        
+        // Debug logging to verify drawing attempts
+        val leftHand = result.leftHandLandmarks()
+        val rightHand = result.rightHandLandmarks()
+        Log.v("HolisticLandmarkOverlay", "🎨 onDraw: Attempting to paint mesh, dataAge=${dataAge}ms, hands=${leftHand?.size ?: 0}L/${rightHand?.size ?: 0}R")
+        
+        if (lastInferenceTime > 0 && dataAge > STALE_DATA_THRESHOLD_MS) {
+            Log.v("HolisticLandmarkOverlay", "Skipping draw: stale data (age=${dataAge}ms)")
+            return  // Don't draw stale data
+        }
+        
+        // Performance monitoring: track draw frequency and data age
+        drawCount++
+        if (currentTime - lastPerformanceLogTime > PERFORMANCE_LOG_INTERVAL_MS) {
+            val drawFps = (drawCount * 1000f / (currentTime - lastPerformanceLogTime)).coerceAtMost(60f)
+            Log.i("HolisticLandmarkOverlay", "📊 Performance: drawFPS=${String.format("%.1f", drawFps)}, avgDataAge=${dataAge}ms, draws=$drawCount")
+            drawCount = 0
+            lastPerformanceLogTime = currentTime
+        }
+        val hasHands = (leftHand != null && leftHand.isNotEmpty()) || (rightHand != null && rightHand.isNotEmpty())
+        if (hasHands && PerformanceConfig.VERBOSE_LOGGING) {
+            Log.v("HolisticLandmarkOverlay", "🎨 Drawing overlay: L=${leftHand?.size ?: 0}, R=${rightHand?.size ?: 0}, dataAge=${dataAge}ms, viewSize=${width}x${height}")
+        }
         
         // Mirror the canvas horizontally to fix front camera mirroring
         canvas.save()
         canvas.scale(-1f, 1f, width / 2f, height / 2f)
-        
-        // Draw pose first (background layer)
-        drawPoseLandmarks(canvas, result)
         
         // Draw face (middle layer)
         drawFaceLandmarks(canvas, result)
@@ -300,49 +340,6 @@ class HolisticLandmarkOverlay @JvmOverloads constructor(
                 
                 canvas.drawCircle(x, y, 3f, faceLandmarkPaint)
             }
-        }
-    }
-    
-    private fun drawPoseLandmarks(canvas: Canvas, result: HolisticLandmarkerResult) {
-        val poseLandmarks = result.poseLandmarks() ?: return
-        if (poseLandmarks.isEmpty()) return
-        
-        poseConnectionPaint.color = Color.rgb(244, 67, 54) // Red
-        poseConnectionPaint.alpha = 180
-        poseLandmarkPaint.color = Color.rgb(244, 67, 54)
-        poseLandmarkPaint.alpha = 180
-        
-        // Draw pose connections (skeleton)
-        for (connection in poseConnections) {
-            val startIdx = connection.first
-            val endIdx = connection.second
-            
-            if (startIdx < poseLandmarks.size && endIdx < poseLandmarks.size) {
-                val start = poseLandmarks[startIdx]
-                val end = poseLandmarks[endIdx]
-                
-                val startX = start.x() * width
-                val startY = start.y() * height
-                val endX = end.x() * width
-                val endY = end.y() * height
-                
-                canvas.drawLine(startX, startY, endX, endY, poseConnectionPaint)
-            }
-        }
-        
-        // Draw pose landmarks
-        for (landmark in poseLandmarks) {
-            val x = landmark.x() * width
-            val y = landmark.y() * height
-            
-            canvas.drawCircle(x, y, 5f, poseLandmarkPaint)
-            
-            // White center
-            poseLandmarkPaint.color = Color.WHITE
-            poseLandmarkPaint.alpha = 180
-            canvas.drawCircle(x, y, 2f, poseLandmarkPaint)
-            
-            poseLandmarkPaint.color = Color.rgb(244, 67, 54)
         }
     }
 }

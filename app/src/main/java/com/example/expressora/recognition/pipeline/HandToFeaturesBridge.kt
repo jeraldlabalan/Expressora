@@ -160,7 +160,7 @@ object HandToFeaturesBridge {
         
         // DEBUG: Log raw feature vector info
         val nonZeroCount = rawFeatureVector.count { it != 0f }
-        val expectedSize = if (twoHands) 126 else 63
+        val expectedSize = 126 // Model always expects 126 dimensions (2 hands) - unified format
         LogUtils.debugIfVerbose(TAG) { 
             "Raw feature vector: size=${rawFeatureVector.size}, expected=$expectedSize, " +
             "nonZero=$nonZeroCount, isAllZeros=${nonZeroCount == 0}"

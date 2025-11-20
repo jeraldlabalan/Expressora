@@ -44,11 +44,9 @@ class ExpressoraTranslationServicer(expressora_pb2_grpc.TranslationServiceServic
         
         # Step 2: Multi-Frame Validation - Track recent detections for temporal consistency
         self._recent_gloss_detections = []  # Buffer for recent detections
-        self._min_consistent_frames = 3  # Require 3 frames for stability (kills ghost flicker)
+        self._min_consistent_frames = 2  # Require 2 frames for stability (reduced from 3 for better responsiveness)
         
-        # Step 3: Motion Detection Validation - Track previous hand positions
-        self._previous_hand_landmarks = None  # Store previous frame's hand landmarks
-        self._min_movement_threshold = 0.01  # REDUCED from 0.05 to 0.01 (1% instead of 5%)
+        # Motion detection removed - client-side only (if client sends data, assume motion is happening)
         
         # TONE event optimization - trigger only after gloss registration
         self._last_tone_event = None
@@ -150,82 +148,65 @@ class ExpressoraTranslationServicer(expressora_pb2_grpc.TranslationServiceServic
                         self._previous_hand_landmarks = None
                     elif valid_hand_detected:
                         # Geometric Sanity Check: Filter ghost hands using hand span
-                        # Ghost hands are typically collapsed to a tiny point (span < 0.08)
-                        # Real hands, even far away, rarely drop below 5-8% of screen size
+                        # Ghost hands are typically collapsed to a tiny point (span < 0.06)
+                        # Real hands, even far away, rarely drop below 5-6% of screen size
+                        # OPTIMIZATION: Check pose wrist confidence first - if high (>0.8), bypass geometric check
+                        pose_landmarks = list(landmark_frame.pose) if landmark_frame.pose else []
+                        pose_wrist_confidence = 0.0
+                        bypass_geometric_check = False
+                        
+                        if len(pose_landmarks) >= 51:  # Pose has 33 landmarks * 3 coords = 99, but we need index 16 (right wrist) = 48-50
+                            # Right wrist is at index 16 in pose landmarks (x, y, z, visibility, presence)
+                            # MediaPipe pose format: [x, y, z, visibility, presence] per landmark
+                            # For normalized coordinates, we check if wrist position is valid
+                            right_wrist_idx = 16 * 3  # x coordinate of right wrist
+                            if right_wrist_idx + 2 < len(pose_landmarks):
+                                # Check if wrist position is non-zero (indicates detection)
+                                wrist_x = pose_landmarks[right_wrist_idx]
+                                wrist_y = pose_landmarks[right_wrist_idx + 1]
+                                wrist_z = pose_landmarks[right_wrist_idx + 2]
+                                # If wrist is detected (non-zero), assume high confidence
+                                if abs(wrist_x) > 0.001 or abs(wrist_y) > 0.001:
+                                    pose_wrist_confidence = 0.9  # High confidence if detected
+                                    bypass_geometric_check = True
+                                    if frame_count <= 5 or frame_count % 30 == 0:
+                                        logger.debug(f"✅ Pose wrist detected - bypassing geometric check (confidence: {pose_wrist_confidence:.2f})")
+                        
                         max_span = 0.0
                         valid_span_found = False
                         
-                        for i in range(hand_count):
-                            hand_start = i * 63
-                            hand_end = hand_start + 63
-                            if hand_end > len(hand_landmarks):
-                                continue
-                            hand_chunk = hand_landmarks[hand_start:hand_end]
-                            span = self._calculate_hand_span(hand_chunk)
-                            max_span = max(max_span, span)
-                            
-                            if span >= 0.08:
-                                valid_span_found = True
-                                if frame_count <= 5 or frame_count % 30 == 0:
-                                    logger.debug(f"✅ Hand {i+1} passed geometric check (span: {span:.4f} >= 0.08)")
+                        if not bypass_geometric_check:
+                            # Perform geometric check with relaxed threshold (0.06 instead of 0.08)
+                            for i in range(hand_count):
+                                hand_start = i * 63
+                                hand_end = hand_start + 63
+                                if hand_end > len(hand_landmarks):
+                                    continue
+                                hand_chunk = hand_landmarks[hand_start:hand_end]
+                                span = self._calculate_hand_span(hand_chunk)
+                                max_span = max(max_span, span)
+                                
+                                # Early exit: if any hand passes, we're done
+                                if span >= 0.06:  # Relaxed threshold from 0.08 to 0.06
+                                    valid_span_found = True
+                                    if frame_count <= 5 or frame_count % 30 == 0:
+                                        logger.debug(f"✅ Hand {i+1} passed geometric check (span: {span:.4f} >= 0.06)")
+                                    break  # Early exit - don't check remaining hands
+                        else:
+                            # Pose confidence is high - trust the detection
+                            valid_span_found = True
                         
                         if not valid_span_found:
                             # All detected hands are ghosts (collapsed/tiny)
                             if frame_count <= 5 or frame_count % 30 == 0:
-                                logger.info(f"👻 Ghost Hand Ignored (max span: {max_span:.4f} < 0.08)")
+                                logger.info(f"👻 Ghost Hand Ignored (max span: {max_span:.4f} < 0.06)")
                             gloss_label, gloss_confidence = None, 0.0
-                            self._previous_hand_landmarks = None
                         else:
-                            # At least one hand has valid span - proceed with motion detection
-                            # Step 3: Motion Detection Validation - Check if hands have moved
-                            hands_moved = True  # Default to True for first frame
-                            if self._previous_hand_landmarks is not None:
-                                # Calculate average landmark displacement
-                                total_displacement = 0.0
-                                landmark_count = 0
-                                
-                                for i in range(min(hand_count, len(self._previous_hand_landmarks) // 63)):
-                                    hand_start = i * 63
-                                    hand_end = hand_start + 63
-                                    if hand_end > len(hand_landmarks) or hand_end > len(self._previous_hand_landmarks):
-                                        continue
-                                    current_hand = np.array(hand_landmarks[hand_start:hand_end])
-                                    prev_hand = np.array(self._previous_hand_landmarks[hand_start:hand_end])
-                                    
-                                    # Calculate Euclidean distance for each landmark
-                                    for j in range(0, 63, 3):  # Process x,y,z triplets
-                                        if j + 2 < len(current_hand) and j + 2 < len(prev_hand):
-                                            current_point = current_hand[j:j+3]
-                                            prev_point = prev_hand[j:j+3]
-                                            displacement = np.linalg.norm(current_point - prev_point)
-                                            total_displacement += displacement
-                                            landmark_count += 1
-                                
-                                if landmark_count > 0:
-                                    avg_displacement = total_displacement / landmark_count
-                                    hands_moved = avg_displacement >= self._min_movement_threshold
-                                    
-                                    if not hands_moved:
-                                        if frame_count <= 5 or frame_count % 30 == 0:
-                                            logger.debug(f"⏸️ Hands static (displacement: {avg_displacement:.4f} < {self._min_movement_threshold})")
-                            else:
-                                # First frame - no previous data, allow processing
-                                hands_moved = True
-                            
-                            # Update previous landmarks for next frame
-                            self._previous_hand_landmarks = hand_landmarks.copy() if hand_landmarks else None
-                            
-                            if hands_moved:
-                                # Valid hand detected and moving - proceed with GLOSS classification
-                                # Classify hands separately (for GLOSS events)
-                                gloss_label, gloss_confidence = self.classifier.classify_hands(landmark_frame)
-                                if frame_count <= 5 or frame_count % 30 == 0:
-                                    logger.debug(f"🔍 Classified hands: {gloss_label} (confidence: {gloss_confidence:.2f})")
-                            else:
-                                # Hands not moving - skip GLOSS classification to prevent static false positives
-                                gloss_label, gloss_confidence = None, 0.0
-                                if frame_count <= 5 or frame_count % 30 == 0:
-                                    logger.debug("⏸️ Skipping GLOSS: hands not moving")
+                            # Valid hand detected - proceed with GLOSS classification
+                            # Motion detection removed - client-side only (if client sends data, assume motion is happening)
+                            gloss_label, gloss_confidence = self.classifier.classify_hands(landmark_frame)
+                            if frame_count <= 5 or frame_count % 30 == 0:
+                                logger.debug(f"🔍 Classified hands: {gloss_label} (confidence: {gloss_confidence:.2f})")
                     else:
                         # No valid hand detected, skip GLOSS classification
                         gloss_label, gloss_confidence = None, 0.0
@@ -289,6 +270,10 @@ class ExpressoraTranslationServicer(expressora_pb2_grpc.TranslationServiceServic
                     # Reset flag after processing tone
                     self._last_gloss_yielded = False
                     
+        except grpc.RpcError as e:
+            # Client disconnected - this is normal, don't treat as error
+            logger.info(f"Client disconnected from landmark stream: {e.code()}")
+            # Do NOT set error code or raise - let function return gracefully
         except Exception as e:
             logger.error(f"Error in landmark stream: {e}", exc_info=True)
             context.set_code(grpc.StatusCode.INTERNAL)
