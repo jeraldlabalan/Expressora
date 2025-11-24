@@ -29,9 +29,7 @@ object DeviceCapabilityDetector {
     )
     
     enum class ModelType {
-        INT8,   // Best for CPU-only devices, smallest size
-        FP16,   // Best for GPU-enabled devices, good balance
-        FP32    // Fallback, largest size, CPU-only
+        FP32    // Only FP32 model is used now
     }
     
     enum class DelegateType {
@@ -56,12 +54,8 @@ object DeviceCapabilityDetector {
         // Check NNAPI availability
         val hasNnapi = checkNnapiAvailability()
         
-        // Determine recommended model type
-        val recommendedModel = when {
-            hasGpu -> ModelType.FP16  // GPU works best with FP16
-            hasNnapi -> ModelType.INT8 // NNAPI can handle INT8 on some devices
-            else -> ModelType.INT8     // CPU-only: INT8 is fastest
-        }
+        // Only FP32 model is used now
+        val recommendedModel = ModelType.FP32
         
         // Determine recommended delegate
         val recommendedDelegate = when {
@@ -97,11 +91,8 @@ object DeviceCapabilityDetector {
         val hasGpu = gpuAvailable ?: false
         val hasNnapi = nnapiAvailable ?: false
         
-        val recommendedModel = when {
-            hasGpu -> ModelType.FP16
-            hasNnapi -> ModelType.INT8
-            else -> ModelType.INT8
-        }
+        // Only FP32 model is used now
+        val recommendedModel = ModelType.FP32
         
         val recommendedDelegate = when {
             hasGpu && PerformanceConfig.USE_GPU -> DelegateType.GPU
@@ -175,11 +166,8 @@ object DeviceCapabilityDetector {
      * Get recommended model filename based on model type.
      */
     fun getModelFilename(modelType: ModelType): String {
-        return when (modelType) {
-            ModelType.INT8 -> "expressora_unified_int8.tflite"
-            ModelType.FP16 -> "expressora_unified_fp16.tflite"
-            ModelType.FP32 -> "expressora_unified.tflite"
-        }
+        // Only FP32 model is used now
+        return "recognition/expressora_unified_v3.tflite"
     }
 }
 

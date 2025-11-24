@@ -22,7 +22,7 @@ class HandLandmarkerEngine(
 ) {
     companion object {
         private const val TAG = "HandLandmarkerEngine"
-        private const val MODEL_ASSET_PATH = "hand_landmarker.task"
+        private const val MODEL_ASSET_PATH = "recognition/hand_landmarker.task"
         
         // Debug counters
         val framesProcessed = AtomicInteger(0)

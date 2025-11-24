@@ -27,7 +27,7 @@ class HolisticLandmarkerEngine private constructor(
 ) {
     companion object {
         private const val TAG = "HolisticLandmarkerEngine"
-        private const val MODEL_ASSET_PATH = "holistic_landmarker.task"
+        private const val MODEL_ASSET_PATH = "recognition/holistic_landmarker.task"
         
         // Debug counters
         val framesProcessed = AtomicInteger(0)

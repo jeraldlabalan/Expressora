@@ -163,7 +163,7 @@ class CameraBitmapAnalyzer(
             // NOTE: We do NOT horizontally flip/mirror the image before sending to MediaPipe.
             // The bitmap orientation matches the actual camera view (not mirrored).
             // MediaPipe's handedness labels are reversed relative to the person's actual hands,
-            // so we handle the reversal in HandToFeaturesBridge mapping logic instead.
+            // so we handle the reversal in LandmarkFeatureExtractor mapping logic.
             // This ensures consistent behavior for both front and rear cameras.
             
             // ROI detection and cropping

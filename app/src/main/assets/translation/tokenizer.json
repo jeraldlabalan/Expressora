@@ -1,0 +1,5246 @@
+{
+  "version": "1.0",
+  "truncation": {
+    "direction": "Right",
+    "max_length": 128,
+    "strategy": "LongestFirst",
+    "stride": 0
+  },
+  "padding": {
+    "strategy": {
+      "Fixed": 128
+    },
+    "direction": "Right",
+    "pad_to_multiple_of": null,
+    "pad_id": 1060,
+    "pad_type_id": 0,
+    "pad_token": "<pad>"
+  },
+  "added_tokens": [
+    {
+      "id": 0,
+      "content": "[PAD]",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": true
+    },
+    {
+      "id": 1,
+      "content": "[EOS]",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": true
+    },
+    {
+      "id": 2,
+      "content": "[UNK]",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": true
+    },
+    {
+      "id": 3,
+      "content": "<2en>",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": true
+    },
+    {
+      "id": 4,
+      "content": "<2fil>",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": true
+    },
+    {
+      "id": 1058,
+      "content": "</s>",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": true
+    },
+    {
+      "id": 1059,
+      "content": "<unk>",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": true
+    },
+    {
+      "id": 1060,
+      "content": "<pad>",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": true
+    },
+    {
+      "id": 1061,
+      "content": "<extra_id_0>",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": true
+    },
+    {
+      "id": 1062,
+      "content": "<extra_id_1>",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": true
+    },
+    {
+      "id": 1063,
+      "content": "<extra_id_2>",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": true
+    },
+    {
+      "id": 1064,
+      "content": "<extra_id_3>",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": true
+    },
+    {
+      "id": 1065,
+      "content": "<extra_id_4>",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": true
+    },
+    {
+      "id": 1066,
+      "content": "<extra_id_5>",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": true
+    },
+    {
+      "id": 1067,
+      "content": "<extra_id_6>",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": true
+    },
+    {
+      "id": 1068,
+      "content": "<extra_id_7>",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": true
+    },
+    {
+      "id": 1069,
+      "content": "<extra_id_8>",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": true
+    },
+    {
+      "id": 1070,
+      "content": "<extra_id_9>",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": true
+    },
+    {
+      "id": 1071,
+      "content": "<extra_id_10>",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": true
+    },
+    {
+      "id": 1072,
+      "content": "<extra_id_11>",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": true
+    },
+    {
+      "id": 1073,
+      "content": "<extra_id_12>",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": true
+    },
+    {
+      "id": 1074,
+      "content": "<extra_id_13>",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": true
+    },
+    {
+      "id": 1075,
+      "content": "<extra_id_14>",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": true
+    },
+    {
+      "id": 1076,
+      "content": "<extra_id_15>",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": true
+    },
+    {
+      "id": 1077,
+      "content": "<extra_id_16>",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": true
+    },
+    {
+      "id": 1078,
+      "content": "<extra_id_17>",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": true
+    },
+    {
+      "id": 1079,
+      "content": "<extra_id_18>",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": true
+    },
+    {
+      "id": 1080,
+      "content": "<extra_id_19>",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": true
+    },
+    {
+      "id": 1081,
+      "content": "<extra_id_20>",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": true
+    },
+    {
+      "id": 1082,
+      "content": "<extra_id_21>",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": true
+    },
+    {
+      "id": 1083,
+      "content": "<extra_id_22>",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": true
+    },
+    {
+      "id": 1084,
+      "content": "<extra_id_23>",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": true
+    },
+    {
+      "id": 1085,
+      "content": "<extra_id_24>",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": true
+    },
+    {
+      "id": 1086,
+      "content": "<extra_id_25>",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": true
+    },
+    {
+      "id": 1087,
+      "content": "<extra_id_26>",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": true
+    },
+    {
+      "id": 1088,
+      "content": "<extra_id_27>",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": true
+    },
+    {
+      "id": 1089,
+      "content": "<extra_id_28>",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": true
+    },
+    {
+      "id": 1090,
+      "content": "<extra_id_29>",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": true
+    },
+    {
+      "id": 1091,
+      "content": "<extra_id_30>",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": true
+    },
+    {
+      "id": 1092,
+      "content": "<extra_id_31>",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": true
+    },
+    {
+      "id": 1093,
+      "content": "<extra_id_32>",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": true
+    },
+    {
+      "id": 1094,
+      "content": "<extra_id_33>",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": true
+    },
+    {
+      "id": 1095,
+      "content": "<extra_id_34>",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": true
+    },
+    {
+      "id": 1096,
+      "content": "<extra_id_35>",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": true
+    },
+    {
+      "id": 1097,
+      "content": "<extra_id_36>",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": true
+    },
+    {
+      "id": 1098,
+      "content": "<extra_id_37>",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": true
+    },
+    {
+      "id": 1099,
+      "content": "<extra_id_38>",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": true
+    },
+    {
+      "id": 1100,
+      "content": "<extra_id_39>",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": true
+    },
+    {
+      "id": 1101,
+      "content": "<extra_id_40>",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": true
+    },
+    {
+      "id": 1102,
+      "content": "<extra_id_41>",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": true
+    },
+    {
+      "id": 1103,
+      "content": "<extra_id_42>",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": true
+    },
+    {
+      "id": 1104,
+      "content": "<extra_id_43>",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": true
+    },
+    {
+      "id": 1105,
+      "content": "<extra_id_44>",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": true
+    },
+    {
+      "id": 1106,
+      "content": "<extra_id_45>",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": true
+    },
+    {
+      "id": 1107,
+      "content": "<extra_id_46>",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": true
+    },
+    {
+      "id": 1108,
+      "content": "<extra_id_47>",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": true
+    },
+    {
+      "id": 1109,
+      "content": "<extra_id_48>",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": true
+    },
+    {
+      "id": 1110,
+      "content": "<extra_id_49>",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": true
+    },
+    {
+      "id": 1111,
+      "content": "<extra_id_50>",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": true
+    },
+    {
+      "id": 1112,
+      "content": "<extra_id_51>",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": true
+    },
+    {
+      "id": 1113,
+      "content": "<extra_id_52>",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": true
+    },
+    {
+      "id": 1114,
+      "content": "<extra_id_53>",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": true
+    },
+    {
+      "id": 1115,
+      "content": "<extra_id_54>",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": true
+    },
+    {
+      "id": 1116,
+      "content": "<extra_id_55>",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": true
+    },
+    {
+      "id": 1117,
+      "content": "<extra_id_56>",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": true
+    },
+    {
+      "id": 1118,
+      "content": "<extra_id_57>",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": true
+    },
+    {
+      "id": 1119,
+      "content": "<extra_id_58>",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": true
+    },
+    {
+      "id": 1120,
+      "content": "<extra_id_59>",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": true
+    },
+    {
+      "id": 1121,
+      "content": "<extra_id_60>",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": true
+    },
+    {
+      "id": 1122,
+      "content": "<extra_id_61>",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": true
+    },
+    {
+      "id": 1123,
+      "content": "<extra_id_62>",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": true
+    },
+    {
+      "id": 1124,
+      "content": "<extra_id_63>",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": true
+    },
+    {
+      "id": 1125,
+      "content": "<extra_id_64>",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": true
+    },
+    {
+      "id": 1126,
+      "content": "<extra_id_65>",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": true
+    },
+    {
+      "id": 1127,
+      "content": "<extra_id_66>",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": true
+    },
+    {
+      "id": 1128,
+      "content": "<extra_id_67>",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": true
+    },
+    {
+      "id": 1129,
+      "content": "<extra_id_68>",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": true
+    },
+    {
+      "id": 1130,
+      "content": "<extra_id_69>",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": true
+    },
+    {
+      "id": 1131,
+      "content": "<extra_id_70>",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": true
+    },
+    {
+      "id": 1132,
+      "content": "<extra_id_71>",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": true
+    },
+    {
+      "id": 1133,
+      "content": "<extra_id_72>",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": true
+    },
+    {
+      "id": 1134,
+      "content": "<extra_id_73>",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": true
+    },
+    {
+      "id": 1135,
+      "content": "<extra_id_74>",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": true
+    },
+    {
+      "id": 1136,
+      "content": "<extra_id_75>",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": true
+    },
+    {
+      "id": 1137,
+      "content": "<extra_id_76>",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": true
+    },
+    {
+      "id": 1138,
+      "content": "<extra_id_77>",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": true
+    },
+    {
+      "id": 1139,
+      "content": "<extra_id_78>",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": true
+    },
+    {
+      "id": 1140,
+      "content": "<extra_id_79>",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": true
+    },
+    {
+      "id": 1141,
+      "content": "<extra_id_80>",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": true
+    },
+    {
+      "id": 1142,
+      "content": "<extra_id_81>",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": true
+    },
+    {
+      "id": 1143,
+      "content": "<extra_id_82>",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": true
+    },
+    {
+      "id": 1144,
+      "content": "<extra_id_83>",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": true
+    },
+    {
+      "id": 1145,
+      "content": "<extra_id_84>",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": true
+    },
+    {
+      "id": 1146,
+      "content": "<extra_id_85>",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": true
+    },
+    {
+      "id": 1147,
+      "content": "<extra_id_86>",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": true
+    },
+    {
+      "id": 1148,
+      "content": "<extra_id_87>",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": true
+    },
+    {
+      "id": 1149,
+      "content": "<extra_id_88>",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": true
+    },
+    {
+      "id": 1150,
+      "content": "<extra_id_89>",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": true
+    },
+    {
+      "id": 1151,
+      "content": "<extra_id_90>",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": true
+    },
+    {
+      "id": 1152,
+      "content": "<extra_id_91>",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": true
+    },
+    {
+      "id": 1153,
+      "content": "<extra_id_92>",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": true
+    },
+    {
+      "id": 1154,
+      "content": "<extra_id_93>",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": true
+    },
+    {
+      "id": 1155,
+      "content": "<extra_id_94>",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": true
+    },
+    {
+      "id": 1156,
+      "content": "<extra_id_95>",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": true
+    },
+    {
+      "id": 1157,
+      "content": "<extra_id_96>",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": true
+    },
+    {
+      "id": 1158,
+      "content": "<extra_id_97>",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": true
+    },
+    {
+      "id": 1159,
+      "content": "<extra_id_98>",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": true
+    },
+    {
+      "id": 1160,
+      "content": "<extra_id_99>",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": true
+    }
+  ],
+  "normalizer": null,
+  "pre_tokenizer": {
+    "type": "Metaspace",
+    "replacement": "▁",
+    "prepend_scheme": "always",
+    "split": true
+  },
+  "post_processor": null,
+  "decoder": {
+    "type": "Metaspace",
+    "replacement": "▁",
+    "prepend_scheme": "always",
+    "split": true
+  },
+  "model": {
+    "type": "Unigram",
+    "unk_id": null,
+    "vocab": [
+      [
+        "[PAD]",
+        0.0
+      ],
+      [
+        "[EOS]",
+        0.0
+      ],
+      [
+        "[UNK]",
+        0.0
+      ],
+      [
+        "<2en>",
+        0.0
+      ],
+      [
+        "<2fil>",
+        0.0
+      ],
+      [
+        "▁",
+        -1.8348931305418752
+      ],
+      [
+        "E",
+        -2.8252523149077806
+      ],
+      [
+        "O",
+        -2.8895586872526433
+      ],
+      [
+        "N",
+        -3.348438612155606
+      ],
+      [
+        "T",
+        -3.445056183749804
+      ],
+      [
+        "R",
+        -3.4713534386684852
+      ],
+      [
+        "H",
+        -3.4751119763460334
+      ],
+      [
+        "A",
+        -3.5070539487514125
+      ],
+      [
+        "W",
+        -3.601294496834484
+      ],
+      [
+        ">",
+        -3.674661080232171
+      ],
+      [
+        "I",
+        -3.7549122695848816
+      ],
+      [
+        "Y",
+        -3.787320277039207
+      ],
+      [
+        "▁<2",
+        -3.869901621279187
+      ],
+      [
+        "n",
+        -3.979725511641103
+      ],
+      [
+        "D",
+        -3.9813395583376394
+      ],
+      [
+        "S",
+        -3.9998142322757744
+      ],
+      [
+        "K",
+        -4.137235588464188
+      ],
+      [
+        "e",
+        -4.162811376683411
+      ],
+      [
+        "L",
+        -4.255315172933125
+      ],
+      [
+        "?",
+        -4.310058675320525
+      ],
+      [
+        "f",
+        -4.408919980459887
+      ],
+      [
+        ".",
+        -4.42888002703447
+      ],
+      [
+        "M",
+        -4.543741626579624
+      ],
+      [
+        "t",
+        -4.618834478994735
+      ],
+      [
+        "i",
+        -4.650439936450276
+      ],
+      [
+        "a",
+        -4.685695056862592
+      ],
+      [
+        "l",
+        -4.736354803139433
+      ],
+      [
+        "F",
+        -4.778490580676809
+      ],
+      [
+        "▁sa",
+        -4.8448812621860675
+      ],
+      [
+        "▁the",
+        -4.93412743585699
+      ],
+      [
+        "G",
+        -5.007502755738971
+      ],
+      [
+        "TER",
+        -5.02038206799206
+      ],
+      [
+        "U",
+        -5.0324346164713205
+      ],
+      [
+        "MOR",
+        -5.055134888938104
+      ],
+      [
+        "il",
+        -5.0730588621881285
+      ],
+      [
+        "C",
+        -5.1137935962616705
+      ],
+      [
+        "o",
+        -5.115363809732575
+      ],
+      [
+        "P",
+        -5.198126319909436
+      ],
+      [
+        "▁to",
+        -5.4189778336097625
+      ],
+      [
+        "s",
+        -5.466824803175676
+      ],
+      [
+        "▁WHE",
+        -5.484837083405823
+      ],
+      [
+        "<",
+        -5.519784933834801
+      ],
+      [
+        "2",
+        -5.519784933834801
+      ],
+      [
+        "B",
+        -5.649014428250132
+      ],
+      [
+        "ng",
+        -5.697952199473292
+      ],
+      [
+        "g",
+        -5.6988040012469305
+      ],
+      [
+        "▁WH",
+        -5.7858134547348765
+      ],
+      [
+        "▁at",
+        -5.859992943086285
+      ],
+      [
+        "▁do",
+        -5.863700957547129
+      ],
+      [
+        "▁WA",
+        -6.046540309641388
+      ],
+      [
+        "ang",
+        -6.116128748453853
+      ],
+      [
+        "w",
+        -6.219378256802729
+      ],
+      [
+        "▁niya",
+        -6.225808866841991
+      ],
+      [
+        "▁siya",
+        -6.2536884796088295
+      ],
+      [
+        "▁farm",
+        -6.283726900360946
+      ],
+      [
+        "▁want",
+        -6.28373509444361
+      ],
+      [
+        "▁bukid",
+        -6.284870442996892
+      ],
+      [
+        "▁home",
+        -6.287077605553433
+      ],
+      [
+        "▁work",
+        -6.2875082774645
+      ],
+      [
+        "▁ngayon",
+        -6.290229342297383
+      ],
+      [
+        "▁school",
+        -6.293391963361582
+      ],
+      [
+        "▁tindahan",
+        -6.3057324023133035
+      ],
+      [
+        "at",
+        -6.308398002207882
+      ],
+      [
+        "▁store",
+        -6.321080166779698
+      ],
+      [
+        "h",
+        -6.323652390660854
+      ],
+      [
+        "▁paaralan",
+        -6.323914866200123
+      ],
+      [
+        "▁Gusto",
+        -6.328422629451685
+      ],
+      [
+        "▁like",
+        -6.354111407845746
+      ],
+      [
+        "▁trabaho",
+        -6.361609024750528
+      ],
+      [
+        "▁bahay",
+        -6.365320902726877
+      ],
+      [
+        "▁does",
+        -6.389431070150252
+      ],
+      [
+        "y",
+        -6.402258001117156
+      ],
+      [
+        ",",
+        -6.402625089143848
+      ],
+      [
+        "▁umaga",
+        -6.414842337413898
+      ],
+      [
+        "▁morning",
+        -6.416137492138953
+      ],
+      [
+        "▁afternoon",
+        -6.423375279731525
+      ],
+      [
+        "▁gabi",
+        -6.446758812051387
+      ],
+      [
+        "▁drink",
+        -6.4505388986588095
+      ],
+      [
+        "▁hapon",
+        -6.454889093762057
+      ],
+      [
+        "▁read",
+        -6.457703885686232
+      ],
+      [
+        "▁need",
+        -6.483082221851282
+      ],
+      [
+        "d",
+        -6.489824636789498
+      ],
+      [
+        "▁write",
+        -6.502483126961682
+      ],
+      [
+        "▁eat",
+        -6.503275567821634
+      ],
+      [
+        "▁kahapon",
+        -6.506514902703721
+      ],
+      [
+        "▁today",
+        -6.527382786090257
+      ],
+      [
+        "sa",
+        -6.534686809185553
+      ],
+      [
+        "▁yesterday",
+        -6.549077224411326
+      ],
+      [
+        "▁night",
+        -6.568280915916555
+      ],
+      [
+        "▁bukas",
+        -6.57367162686414
+      ],
+      [
+        "uwi",
+        -6.5898276940194425
+      ],
+      [
+        "▁tomorrow",
+        -6.614306422565711
+      ],
+      [
+        "ong",
+        -6.646014115010452
+      ],
+      [
+        "▁libro",
+        -6.730571568412557
+      ],
+      [
+        "akit",
+        -6.749155281304358
+      ],
+      [
+        "▁you",
+        -6.75935355829658
+      ],
+      [
+        "▁book",
+        -6.769382867215144
+      ],
+      [
+        "▁she",
+        -6.782149933714868
+      ],
+      [
+        "▁they",
+        -6.799588616398932
+      ],
+      [
+        "here",
+        -6.856659414885298
+      ],
+      [
+        "▁Kailan",
+        -6.858533356939679
+      ],
+      [
+        "aano",
+        -6.858795143187233
+      ],
+      [
+        "▁Whe",
+        -6.870048605465165
+      ],
+      [
+        "▁Saan",
+        -6.874789915678729
+      ],
+      [
+        "▁play",
+        -6.883122072583747
+      ],
+      [
+        "k",
+        -6.888102704566881
+      ],
+      [
+        "▁walk",
+        -6.900858682015032
+      ],
+      [
+        "▁sleep",
+        -6.900909280375414
+      ],
+      [
+        "▁ako",
+        -6.908380202481267
+      ],
+      [
+        "▁Who",
+        -6.917617974553323
+      ],
+      [
+        "▁run",
+        -6.918176258547126
+      ],
+      [
+        "▁gustong",
+        -6.921783734609802
+      ],
+      [
+        "▁What",
+        -6.928540910486843
+      ],
+      [
+        "▁sila",
+        -6.941402664210271
+      ],
+      [
+        "ind",
+        -6.95887684029705
+      ],
+      [
+        "▁Sin",
+        -6.965960353301137
+      ],
+      [
+        "▁come",
+        -7.00095330401215
+      ],
+      [
+        "▁Kailangan",
+        -7.017669155844137
+      ],
+      [
+        "▁Ano",
+        -7.033262972051798
+      ],
+      [
+        "▁did",
+        -7.037158453051283
+      ],
+      [
+        "en",
+        -7.082887003574044
+      ],
+      [
+        "▁You",
+        -7.099302591807321
+      ],
+      [
+        "▁in",
+        -7.10057884657526
+      ],
+      [
+        "▁kailangan",
+        -7.110675729594766
+      ],
+      [
+        "m",
+        -7.162619516443499
+      ],
+      [
+        "▁kumain",
+        -7.17140449166128
+      ],
+      [
+        "▁ka",
+        -7.173596600732967
+      ],
+      [
+        "▁Wh",
+        -7.174303758226651
+      ],
+      [
+        "▁gusto",
+        -7.207365767948344
+      ],
+      [
+        "▁uminom",
+        -7.20989490056925
+      ],
+      [
+        "in",
+        -7.223610471057183
+      ],
+      [
+        "▁we",
+        -7.24535307845845
+      ],
+      [
+        "▁kami",
+        -7.257308599026311
+      ],
+      [
+        "▁namin",
+        -7.347782506816755
+      ],
+      [
+        "▁magbasa",
+        -7.415705650604498
+      ],
+      [
+        "ilang",
+        -7.435532986755248
+      ],
+      [
+        "▁food",
+        -7.437503513823891
+      ],
+      [
+        "▁pagkain",
+        -7.4408208263575775
+      ],
+      [
+        "▁sumulat",
+        -7.445478779258067
+      ],
+      [
+        "▁water",
+        -7.451819529865064
+      ],
+      [
+        "▁tubig",
+        -7.451834136891946
+      ],
+      [
+        "▁TO",
+        -7.5187492092667485
+      ],
+      [
+        "fi",
+        -7.529750369202161
+      ],
+      [
+        "▁tumakbo",
+        -7.547921667912624
+      ],
+      [
+        "▁wi",
+        -7.584076184756464
+      ],
+      [
+        "▁with",
+        -7.593832244792313
+      ],
+      [
+        "▁maglakad",
+        -7.60130066732869
+      ],
+      [
+        "▁matulog",
+        -7.61498311106624
+      ],
+      [
+        "<2",
+        -7.619798153289364
+      ],
+      [
+        "▁ng",
+        -7.6493174916141085
+      ],
+      [
+        "he",
+        -7.65045537801527
+      ],
+      [
+        "▁mo",
+        -7.662309643381968
+      ],
+      [
+        "hey",
+        -7.679130672965409
+      ],
+      [
+        "▁HO",
+        -7.689800189333387
+      ],
+      [
+        "▁maglaro",
+        -7.718138416125567
+      ],
+      [
+        "▁nila",
+        -7.805225960537858
+      ],
+      [
+        "▁hin",
+        -7.814339776331988
+      ],
+      [
+        "▁umiinom",
+        -7.845640031918853
+      ],
+      [
+        "▁kumakain",
+        -7.858657043651894
+      ],
+      [
+        "▁nagbabasa",
+        -7.862701068234792
+      ],
+      [
+        "▁The",
+        -7.916825032909525
+      ],
+      [
+        "▁he",
+        -7.940452117135687
+      ],
+      [
+        "▁sumusulat",
+        -7.967154658775424
+      ],
+      [
+        "▁kasama",
+        -7.987060122233636
+      ],
+      [
+        "▁ko",
+        -8.135282563526019
+      ],
+      [
+        "▁pumunta",
+        -8.153021298407467
+      ],
+      [
+        "▁needs",
+        -8.155694587580745
+      ],
+      [
+        "▁Tomorrow",
+        -8.157584197881725
+      ],
+      [
+        "▁tayo",
+        -8.16047014929393
+      ],
+      [
+        "▁natutulog",
+        -8.166469008528786
+      ],
+      [
+        "'",
+        -8.187895271080404
+      ],
+      [
+        "▁tumatakbo",
+        -8.193225153533149
+      ],
+      [
+        "▁naglalakad",
+        -8.199649645450759
+      ],
+      [
+        "▁natin",
+        -8.216345360314113
+      ],
+      [
+        "▁are",
+        -8.26609325875081
+      ],
+      [
+        "agbabasa",
+        -8.285930139366295
+      ],
+      [
+        "▁naglalaro",
+        -8.302853042181718
+      ],
+      [
+        "to",
+        -8.312752682013915
+      ],
+      [
+        "▁Bukas",
+        -8.358548069447714
+      ],
+      [
+        "miinom",
+        -8.374081167463213
+      ],
+      [
+        "umakain",
+        -8.392045934489417
+      ],
+      [
+        "the",
+        -8.431365372998165
+      ],
+      [
+        "▁thi",
+        -8.465970958180574
+      ],
+      [
+        "▁Yesterday",
+        -8.471956098320184
+      ],
+      [
+        "ing",
+        -8.611464765606335
+      ],
+      [
+        "trabaho",
+        -8.6568955731342
+      ],
+      [
+        "▁dumating",
+        -8.673022866694275
+      ],
+      [
+        "umusulat",
+        -8.676163891360636
+      ],
+      [
+        "▁Today",
+        -8.689562040007129
+      ],
+      [
+        "▁Ngayon",
+        -8.730615782117496
+      ],
+      [
+        "▁W",
+        -8.730712356624423
+      ],
+      [
+        "▁tonight",
+        -8.777330586799449
+      ],
+      [
+        "▁Kahapon",
+        -8.815955804808262
+      ],
+      [
+        "▁S",
+        -8.839341784042354
+      ],
+      [
+        "wi",
+        -8.885188111407091
+      ],
+      [
+        "OM",
+        -8.909733837717315
+      ],
+      [
+        "ow",
+        -8.922351959807964
+      ],
+      [
+        "▁dumarating",
+        -8.939232312617298
+      ],
+      [
+        "HE",
+        -8.968332344361476
+      ],
+      [
+        "IN",
+        -9.015009967876937
+      ],
+      [
+        "NI",
+        -9.042490341872009
+      ],
+      [
+        "▁B",
+        -9.066378868492231
+      ],
+      [
+        "WHE",
+        -9.116916863463342
+      ],
+      [
+        "u",
+        -9.130711720791972
+      ],
+      [
+        "aglalaro",
+        -9.184327376230746
+      ],
+      [
+        "hapon",
+        -9.190518718288756
+      ],
+      [
+        "▁binabasa",
+        -9.193146010681003
+      ],
+      [
+        "▁coming",
+        -9.211416722873654
+      ],
+      [
+        "atutulog",
+        -9.218091672587969
+      ],
+      [
+        "▁basahin",
+        -9.248840104201156
+      ],
+      [
+        "▁for",
+        -9.27023554736066
+      ],
+      [
+        "ST",
+        -9.297487331482955
+      ],
+      [
+        "aglalakad",
+        -9.308785135853196
+      ],
+      [
+        "▁kakain",
+        -9.31586644478595
+      ],
+      [
+        "▁tu",
+        -9.325297064452322
+      ],
+      [
+        "night",
+        -9.357606854378826
+      ],
+      [
+        "▁ba",
+        -9.368380655942063
+      ],
+      [
+        "store",
+        -9.37387772459876
+      ],
+      [
+        "we",
+        -9.387323110104733
+      ],
+      [
+        "ating",
+        -9.390534981882222
+      ],
+      [
+        "uw",
+        -9.392258277510978
+      ],
+      [
+        "RI",
+        -9.39854394067476
+      ],
+      [
+        "HO",
+        -9.411256369858524
+      ],
+      [
+        "▁eats",
+        -9.413639428045222
+      ],
+      [
+        "▁susulat",
+        -9.420462046669323
+      ],
+      [
+        "umatakbo",
+        -9.445546812024766
+      ],
+      [
+        "▁writing",
+        -9.446727354086864
+      ],
+      [
+        "▁isulat",
+        -9.452906831460076
+      ],
+      [
+        "▁magsulat",
+        -9.469306836404256
+      ],
+      [
+        "▁iinom",
+        -9.491504722398592
+      ],
+      [
+        "do",
+        -9.501471696564792
+      ],
+      [
+        "▁papunta",
+        -9.509368567698884
+      ],
+      [
+        "▁magbabasa",
+        -9.517124567212877
+      ],
+      [
+        "▁pumupunta",
+        -9.522260664434622
+      ],
+      [
+        "▁darating",
+        -9.53695470927888
+      ],
+      [
+        "WH",
+        -9.53952395718421
+      ],
+      [
+        "niya",
+        -9.56737162438025
+      ],
+      [
+        "▁saan",
+        -9.583598819331414
+      ],
+      [
+        "▁matutulog",
+        -9.584429206019816
+      ],
+      [
+        "siya",
+        -9.594522289562978
+      ],
+      [
+        "gabi",
+        -9.608397779669552
+      ],
+      [
+        "▁umuwi",
+        -9.610920360760597
+      ],
+      [
+        "ka",
+        -9.633599858974009
+      ],
+      [
+        "▁s",
+        -9.641325856634955
+      ],
+      [
+        "▁kinakain",
+        -9.646193715827971
+      ],
+      [
+        "AT",
+        -9.647939661809922
+      ],
+      [
+        "▁who",
+        -9.648543867661004
+      ],
+      [
+        "ino",
+        -9.666617108964235
+      ],
+      [
+        "▁reads",
+        -9.672225394108008
+      ],
+      [
+        "▁iniinom",
+        -9.673348493740324
+      ],
+      [
+        "b",
+        -9.673768848758469
+      ],
+      [
+        "▁nagbasa",
+        -9.677200347915877
+      ],
+      [
+        "▁tatakbo",
+        -9.680254998142182
+      ],
+      [
+        "▁writes",
+        -9.680691508123832
+      ],
+      [
+        "▁maglalakad",
+        -9.681793042946266
+      ],
+      [
+        "▁sleeping",
+        -9.709012983568844
+      ],
+      [
+        "inom",
+        -9.76555821257674
+      ],
+      [
+        "tindahan",
+        -9.76839824678988
+      ],
+      [
+        "▁drank",
+        -9.782381353137298
+      ],
+      [
+        "paaralan",
+        -9.786621202807048
+      ],
+      [
+        "ngayon",
+        -9.789315818705592
+      ],
+      [
+        "school",
+        -9.79248354049631
+      ],
+      [
+        "OR",
+        -9.79895976833182
+      ],
+      [
+        "WA",
+        -9.804693200416985
+      ],
+      [
+        "bukid",
+        -9.81218153320501
+      ],
+      [
+        "▁reading",
+        -9.839546875240838
+      ],
+      [
+        "▁maglalaro",
+        -9.845394914614698
+      ],
+      [
+        "farm",
+        -9.85196300936104
+      ],
+      [
+        "want",
+        -9.851989207285676
+      ],
+      [
+        "home",
+        -9.855329245993556
+      ],
+      [
+        "work",
+        -9.855752202393996
+      ],
+      [
+        "Gusto",
+        -9.855857146477977
+      ],
+      [
+        "▁kalaro",
+        -9.856500064890106
+      ],
+      [
+        "▁naglakad",
+        -9.867233791348344
+      ],
+      [
+        "kailangan",
+        -9.867782955658576
+      ],
+      [
+        "afternoon",
+        -9.873872067989398
+      ],
+      [
+        "▁nilalaro",
+        -9.886852578507105
+      ],
+      [
+        "▁pupunta",
+        -9.892333207313095
+      ],
+      [
+        "bahay",
+        -9.89283629683209
+      ],
+      [
+        "morning",
+        -9.89485883591836
+      ],
+      [
+        "minom",
+        -9.902691511488596
+      ],
+      [
+        "▁natulog",
+        -9.90390232164891
+      ],
+      [
+        "mama",
+        -9.9158068507623
+      ],
+      [
+        "agsusulat",
+        -9.919973752402086
+      ],
+      [
+        "like",
+        -9.92253518731864
+      ],
+      [
+        "▁inumin",
+        -9.927020232373508
+      ],
+      [
+        "hin",
+        -9.931843383701809
+      ],
+      [
+        "▁wrote",
+        -9.938106782118584
+      ],
+      [
+        "umaga",
+        -9.94248629649844
+      ],
+      [
+        "▁eating",
+        -9.952435354590603
+      ],
+      [
+        "agbasa",
+        -9.95286998125809
+      ],
+      [
+        "TO",
+        -9.953197464045214
+      ],
+      [
+        "does",
+        -9.95796229072536
+      ],
+      [
+        "r",
+        -9.963802612563985
+      ],
+      [
+        "gusto",
+        -9.974511588021668
+      ],
+      [
+        "▁books",
+        -9.975375010448971
+      ],
+      [
+        "drink",
+        -9.978280443593562
+      ],
+      [
+        "kahapon",
+        -9.98548156852825
+      ],
+      [
+        "ara",
+        -9.992911682017787
+      ],
+      [
+        "no",
+        -9.99424921806254
+      ],
+      [
+        "gustong",
+        -9.995254433587837
+      ],
+      [
+        "umain",
+        -9.999850778804776
+      ],
+      [
+        "yesterday",
+        -9.999910462930927
+      ],
+      [
+        "read",
+        -10.026427365469818
+      ],
+      [
+        "▁no",
+        -10.030329274215692
+      ],
+      [
+        "write",
+        -10.030402967796524
+      ],
+      [
+        "▁naglaro",
+        -10.032321170749956
+      ],
+      [
+        "▁sinusulat",
+        -10.040412006067896
+      ],
+      [
+        "where",
+        -10.04669168762213
+      ],
+      [
+        "need",
+        -10.051883295970914
+      ],
+      [
+        "today",
+        -10.055351610884845
+      ],
+      [
+        "di",
+        -10.072514273492398
+      ],
+      [
+        "umarating",
+        -10.076373580343985
+      ],
+      [
+        "tomorrow",
+        -10.077797847746153
+      ],
+      [
+        "▁drinking",
+        -10.081767686553118
+      ],
+      [
+        "bukas",
+        -10.101783756912544
+      ],
+      [
+        "she",
+        -10.112426812967971
+      ],
+      [
+        "▁kainin",
+        -10.118890288473164
+      ],
+      [
+        "▁walking",
+        -10.12896862793265
+      ],
+      [
+        "eat",
+        -10.13846961666065
+      ],
+      [
+        "▁running",
+        -10.157678703485466
+      ],
+      [
+        "▁pauwi",
+        -10.190635271324226
+      ],
+      [
+        "kasama",
+        -10.190975313822214
+      ],
+      [
+        "▁Kakai",
+        -10.199312594889388
+      ],
+      [
+        "▁Kanino",
+        -10.199586147834022
+      ],
+      [
+        "umulat",
+        -10.214583437544343
+      ],
+      [
+        "▁isinusulat",
+        -10.230256507786455
+      ],
+      [
+        "▁nagsusulat",
+        -10.236100479036004
+      ],
+      [
+        "▁P",
+        -10.23733836707882
+      ],
+      [
+        "libro",
+        -10.259224778784445
+      ],
+      [
+        "▁Susulat",
+        -10.265227932384478
+      ],
+      [
+        "▁laruin",
+        -10.291743209111294
+      ],
+      [
+        "ko",
+        -10.304165255232444
+      ],
+      [
+        "with",
+        -10.309013954895685
+      ],
+      [
+        "ako",
+        -10.321327644723947
+      ],
+      [
+        "▁runs",
+        -10.333011388748416
+      ],
+      [
+        "book",
+        -10.339181258210155
+      ],
+      [
+        "▁kinailangan",
+        -10.34567628346219
+      ],
+      [
+        "Kailan",
+        -10.359404632033709
+      ],
+      [
+        "namin",
+        -10.365954974115116
+      ],
+      [
+        "they",
+        -10.369538641114126
+      ],
+      [
+        "inailangan",
+        -10.392014766482951
+      ],
+      [
+        "▁playing",
+        -10.392128898276866
+      ],
+      [
+        "you",
+        -10.394336493208112
+      ],
+      [
+        "sleep",
+        -10.43025594326933
+      ],
+      [
+        "▁sulatan",
+        -10.444493362433306
+      ],
+      [
+        "Saan",
+        -10.4452684899219
+      ],
+      [
+        "play",
+        -10.453413531255542
+      ],
+      [
+        "OO",
+        -10.4679993460013
+      ],
+      [
+        "▁sinusulatan",
+        -10.469411370756536
+      ],
+      [
+        "▁N",
+        -10.470031854617858
+      ],
+      [
+        "Kailangan",
+        -10.470225307763473
+      ],
+      [
+        "walk",
+        -10.47123540017319
+      ],
+      [
+        "▁tinatakbo",
+        -10.481731177567026
+      ],
+      [
+        "▁k",
+        -10.495292432215656
+      ],
+      [
+        "What",
+        -10.49914193361318
+      ],
+      [
+        "Whe",
+        -10.506586339145256
+      ],
+      [
+        "RE",
+        -10.510913360134133
+      ],
+      [
+        "sila",
+        -10.51204286976594
+      ],
+      [
+        "▁w",
+        -10.512505407075114
+      ],
+      [
+        "▁m",
+        -10.520084440809669
+      ],
+      [
+        "OD",
+        -10.528449076264272
+      ],
+      [
+        "TE",
+        -10.529481290279971
+      ],
+      [
+        "▁walks",
+        -10.535070562462458
+      ],
+      [
+        "▁takbuhin",
+        -10.537300178145626
+      ],
+      [
+        "▁t",
+        -10.540441648174909
+      ],
+      [
+        "▁th",
+        -10.54350018312801
+      ],
+      [
+        "run",
+        -10.553835198487354
+      ],
+      [
+        "Who",
+        -10.554415943187234
+      ],
+      [
+        "come",
+        -10.57183132394004
+      ],
+      [
+        "kami",
+        -10.572160746222051
+      ],
+      [
+        "▁about",
+        -10.58075694032796
+      ],
+      [
+        "▁He",
+        -10.582943179136787
+      ],
+      [
+        "▁umuuwi",
+        -10.598271161158443
+      ],
+      [
+        "Sin",
+        -10.602865597755004
+      ],
+      [
+        "▁We",
+        -10.607797733166096
+      ],
+      [
+        "▁nilalakad",
+        -10.633954535095643
+      ],
+      [
+        "▁para",
+        -10.656873593908976
+      ],
+      [
+        "Ano",
+        -10.673654653452182
+      ],
+      [
+        "kumain",
+        -10.67379020839789
+      ],
+      [
+        "did",
+        -10.673966656425703
+      ],
+      [
+        "▁lakarin",
+        -10.6742360060757
+      ],
+      [
+        "▁Does",
+        -10.68018570620757
+      ],
+      [
+        "▁plays",
+        -10.708268420366483
+      ],
+      [
+        "▁pagtulog",
+        -10.71090493051146
+      ],
+      [
+        "uminom",
+        -10.712500008527195
+      ],
+      [
+        "▁whe",
+        -10.72527110659852
+      ],
+      [
+        "You",
+        -10.73671584103094
+      ],
+      [
+        "▁how",
+        -10.738789860497183
+      ],
+      [
+        "susulat",
+        -10.73950697120005
+      ],
+      [
+        "▁binasa",
+        -10.760304586133149
+      ],
+      [
+        "▁makakasama",
+        -10.762088428644764
+      ],
+      [
+        "▁paano",
+        -10.76990457688352
+      ],
+      [
+        "▁eskuwelahan",
+        -10.772750914665089
+      ],
+      [
+        "akasama",
+        -10.786194638357458
+      ],
+      [
+        "▁slept",
+        -10.801758909987647
+      ],
+      [
+        "ba",
+        -10.813900365306768
+      ],
+      [
+        "mo",
+        -10.820029332754157
+      ],
+      [
+        "▁ca",
+        -10.835459593531509
+      ],
+      [
+        "▁from",
+        -10.83714407675496
+      ],
+      [
+        "▁nagustuhan",
+        -10.86310933672737
+      ],
+      [
+        "▁babasah",
+        -10.8813279173476
+      ],
+      [
+        "magbasa",
+        -10.898884706024358
+      ],
+      [
+        "▁T",
+        -10.914269244461304
+      ],
+      [
+        "▁F",
+        -10.921963403355967
+      ],
+      [
+        "pagkain",
+        -10.924173419814329
+      ],
+      [
+        "sumulat",
+        -10.928866523147764
+      ],
+      [
+        "Wh",
+        -10.935720624865237
+      ],
+      [
+        "inumin",
+        -10.947239212847172
+      ],
+      [
+        "▁kasa",
+        -10.95911377384013
+      ],
+      [
+        "atulog",
+        -10.969932735565973
+      ],
+      [
+        "water",
+        -10.984422458353356
+      ],
+      [
+        "tubig",
+        -10.984439490710264
+      ],
+      [
+        "win",
+        -11.001410604907443
+      ],
+      [
+        "aglaro",
+        -11.010735111316222
+      ],
+      [
+        "food",
+        -11.011166028414769
+      ],
+      [
+        "▁walked",
+        -11.012151323219978
+      ],
+      [
+        "EA",
+        -11.013202895127565
+      ],
+      [
+        "tumakbo",
+        -11.032096596628234
+      ],
+      [
+        "▁gawin",
+        -11.036713117557529
+      ],
+      [
+        "▁Nasa",
+        -11.047144823921034
+      ],
+      [
+        "tulugan",
+        -11.048837594869134
+      ],
+      [
+        "▁klase",
+        -11.062638264271335
+      ],
+      [
+        "arating",
+        -11.063125410865087
+      ],
+      [
+        "maglakad",
+        -11.070031148576849
+      ],
+      [
+        "▁wo",
+        -11.083335135132522
+      ],
+      [
+        "▁is",
+        -11.084246628560408
+      ],
+      [
+        "matulog",
+        -11.09972315424622
+      ],
+      [
+        "aglakad",
+        -11.115703390989484
+      ],
+      [
+        "umating",
+        -11.117690735957504
+      ],
+      [
+        "▁Did",
+        -11.124402164286968
+      ],
+      [
+        "nila",
+        -11.127802092143234
+      ],
+      [
+        "▁them",
+        -11.128120723153394
+      ],
+      [
+        "umakbo",
+        -11.128842578167392
+      ],
+      [
+        "▁araw",
+        -11.130796650037803
+      ],
+      [
+        "▁paglalakad",
+        -11.13408783818959
+      ],
+      [
+        "▁ginaga",
+        -11.149219501393665
+      ],
+      [
+        "NO",
+        -11.164422392034396
+      ],
+      [
+        "▁kakainin",
+        -11.16796413150362
+      ],
+      [
+        "▁kanin",
+        -11.169197167340531
+      ],
+      [
+        "ran",
+        -11.180078377825035
+      ],
+      [
+        "▁wh",
+        -11.195898425289323
+      ],
+      [
+        "▁a",
+        -11.203267638035111
+      ],
+      [
+        "maglaro",
+        -11.203814350215165
+      ],
+      [
+        "ano",
+        -11.218473619050762
+      ],
+      [
+        "▁kanila",
+        -11.224101489189398
+      ],
+      [
+        "▁kinain",
+        -11.261903294130978
+      ],
+      [
+        "▁am",
+        -11.269283720872156
+      ],
+      [
+        "▁basahan",
+        -11.272730933135296
+      ],
+      [
+        "agustuhan",
+        -11.282352086610166
+      ],
+      [
+        "ll",
+        -11.283942462538125
+      ],
+      [
+        "sinulat",
+        -11.287163700052664
+      ],
+      [
+        "▁nasa",
+        -11.30269214272558
+      ],
+      [
+        "ul",
+        -11.310389575476387
+      ],
+      [
+        "atakbo",
+        -11.316420726442376
+      ],
+      [
+        "nagbabasa",
+        -11.321384647941915
+      ],
+      [
+        "▁kin",
+        -11.32491553865653
+      ],
+      [
+        "kumakain",
+        -11.32984028299607
+      ],
+      [
+        "umiinom",
+        -11.332608349628918
+      ],
+      [
+        "inusulat",
+        -11.335486422315778
+      ],
+      [
+        "▁eskuwela",
+        -11.38862888592312
+      ],
+      [
+        "ou",
+        -11.403504155329433
+      ],
+      [
+        "▁I",
+        -11.407885328615832
+      ],
+      [
+        "tu",
+        -11.411374988068818
+      ],
+      [
+        "umupunta",
+        -11.419222273326136
+      ],
+      [
+        "thi",
+        -11.419890556089015
+      ],
+      [
+        "hat",
+        -11.421132025399125
+      ],
+      [
+        "sumusulat",
+        -11.427003366767282
+      ],
+      [
+        "upunta",
+        -11.44010944903983
+      ],
+      [
+        "atakbuhin",
+        -11.442613624152743
+      ],
+      [
+        "▁H",
+        -11.46042938073341
+      ],
+      [
+        "for",
+        -11.479393446596225
+      ],
+      [
+        "▁puma",
+        -11.5154333788696
+      ],
+      [
+        "▁puntahan",
+        -11.51829843120752
+      ],
+      [
+        "▁eskwelahan",
+        -11.535203284764696
+      ],
+      [
+        "ed",
+        -11.559570272464972
+      ],
+      [
+        "The",
+        -11.562159440574373
+      ],
+      [
+        "▁kailan",
+        -11.57849278272084
+      ],
+      [
+        "han",
+        -11.59835910251626
+      ],
+      [
+        "▁eskwela",
+        -11.62801326976084
+      ],
+      [
+        "natutulog",
+        -11.628978860592516
+      ],
+      [
+        "Tomorrow",
+        -11.632563785428813
+      ],
+      [
+        "kalaro",
+        -11.635806614650669
+      ],
+      [
+        "▁him",
+        -11.637228726931346
+      ],
+      [
+        "▁arrive",
+        -11.640623201911549
+      ],
+      [
+        "▁lalaru",
+        -11.643082760675618
+      ],
+      [
+        "pumunta",
+        -11.643907400921329
+      ],
+      [
+        "naglalakad",
+        -11.652454074185066
+      ],
+      [
+        "hom",
+        -11.653299046944952
+      ],
+      [
+        "▁makatulog",
+        -11.653920161799514
+      ],
+      [
+        "tumatakbo",
+        -11.656110554106675
+      ],
+      [
+        "on",
+        -11.65823138824508
+      ],
+      [
+        "dumating",
+        -11.664835157595231
+      ],
+      [
+        "muuwi",
+        -11.675307844100974
+      ],
+      [
+        "▁pagdating",
+        -11.679445385931974
+      ],
+      [
+        "iinom",
+        -11.692184113647247
+      ],
+      [
+        "▁sin",
+        -11.695608988817357
+      ],
+      [
+        "needs",
+        -11.696157394055597
+      ],
+      [
+        "▁tinakbo",
+        -11.704828285653493
+      ],
+      [
+        "▁nanggagaling",
+        -11.706484425386147
+      ],
+      [
+        "▁uuwi",
+        -11.706829367880545
+      ],
+      [
+        "▁sinulat",
+        -11.729992146501631
+      ],
+      [
+        "tayo",
+        -11.742689971085374
+      ],
+      [
+        "▁Y",
+        -11.753200058797171
+      ],
+      [
+        "natin",
+        -11.7590574343974
+      ],
+      [
+        "basahin",
+        -11.765103423288954
+      ],
+      [
+        "naglalaro",
+        -11.767512067442876
+      ],
+      [
+        "lakad",
+        -11.77219799500836
+      ],
+      [
+        "▁tinu",
+        -11.778083842618738
+      ],
+      [
+        "gawin",
+        -11.779942522594082
+      ],
+      [
+        "p",
+        -11.83381053784991
+      ],
+      [
+        "her",
+        -11.83816803482546
+      ],
+      [
+        "▁pagtakbo",
+        -11.848102049320664
+      ],
+      [
+        "▁kakailanganin",
+        -11.849672408749957
+      ],
+      [
+        "takbo",
+        -11.86857320946294
+      ],
+      [
+        "dumarating",
+        -11.880300753509886
+      ],
+      [
+        "kit",
+        -11.886367325437352
+      ],
+      [
+        "Bukas",
+        -11.90256026409004
+      ],
+      [
+        "▁Wala",
+        -11.90785156031097
+      ],
+      [
+        "▁pinapa",
+        -11.910072921141351
+      ],
+      [
+        "tung",
+        -11.920795214481243
+      ],
+      [
+        "▁n",
+        -11.92465105139998
+      ],
+      [
+        "are",
+        -11.9348696767848
+      ],
+      [
+        "▁d",
+        -11.937771337638791
+      ],
+      [
+        "▁Pa",
+        -11.93873310383443
+      ],
+      [
+        "Yesterday",
+        -11.939674346086464
+      ],
+      [
+        "am",
+        -11.94097005908963
+      ],
+      [
+        "▁pinupuntahan",
+        -11.945906643339368
+      ],
+      [
+        "c",
+        -11.949535970777498
+      ],
+      [
+        "atin",
+        -11.979907511600672
+      ],
+      [
+        "ere",
+        -12.00806011909008
+      ],
+      [
+        "▁doing",
+        -12.023181344301848
+      ],
+      [
+        "▁atin",
+        -12.024566858372712
+      ],
+      [
+        "onight",
+        -12.029261936869991
+      ],
+      [
+        "tatakbo",
+        -12.072929614103757
+      ],
+      [
+        "tulog",
+        -12.08146365035153
+      ],
+      [
+        "▁have",
+        -12.086869842602082
+      ],
+      [
+        "something",
+        -12.10222273215137
+      ],
+      [
+        "▁pagpunta",
+        -12.129883992740387
+      ],
+      [
+        "▁D",
+        -12.146262821196146
+      ],
+      [
+        "▁on",
+        -12.147720400340887
+      ],
+      [
+        "▁tulog",
+        -12.148173795326873
+      ],
+      [
+        "ER",
+        -12.149251272028817
+      ],
+      [
+        "saan",
+        -12.1675783176593
+      ],
+      [
+        "▁hinihigaan",
+        -12.172134019198731
+      ],
+      [
+        "ch",
+        -12.189685083267204
+      ],
+      [
+        "an",
+        -12.198124770675966
+      ],
+      [
+        "▁Kuma",
+        -12.21452179391909
+      ],
+      [
+        "▁be",
+        -12.233779595650589
+      ],
+      [
+        "Today",
+        -12.24116930776108
+      ],
+      [
+        "▁her",
+        -12.243777887126129
+      ],
+      [
+        "Ngayon",
+        -12.254360971152805
+      ],
+      [
+        "▁us",
+        -12.2549272819579
+      ],
+      [
+        "▁makasa",
+        -12.257528954378149
+      ],
+      [
+        "uri",
+        -12.27406757647114
+      ],
+      [
+        "tonight",
+        -12.281150545435247
+      ],
+      [
+        "laruin",
+        -12.311348781410125
+      ],
+      [
+        "Kahapon",
+        -12.320873614132156
+      ],
+      [
+        "▁get",
+        -12.325272134043106
+      ],
+      [
+        "agsulat",
+        -12.331715299819708
+      ],
+      [
+        "▁nilaka",
+        -12.35571419475717
+      ],
+      [
+        "▁Ba",
+        -12.365391492839096
+      ],
+      [
+        "mula",
+        -12.383021697537655
+      ],
+      [
+        "darating",
+        -12.392486601777676
+      ],
+      [
+        "▁kanya",
+        -12.408309431832134
+      ],
+      [
+        "▁patakbuhin",
+        -12.410477877809829
+      ],
+      [
+        ")",
+        -12.429756234525104
+      ],
+      [
+        "▁magtrabaho",
+        -12.465939166204114
+      ],
+      [
+        "▁nagtatrabaho",
+        -12.46925836885473
+      ],
+      [
+        "▁lalakar",
+        -12.485736712126478
+      ],
+      [
+        "inabasa",
+        -12.499682528809188
+      ],
+      [
+        "isulat",
+        -12.5072413696656
+      ],
+      [
+        "ith",
+        -12.522779312307872
+      ],
+      [
+        "▁nilalakaran",
+        -12.52466996899351
+      ],
+      [
+        "ome",
+        -12.53089657915416
+      ],
+      [
+        "▁Gust",
+        -12.540331688675598
+      ],
+      [
+        "about",
+        -12.540531024346922
+      ],
+      [
+        "RN",
+        -12.54140946036084
+      ],
+      [
+        "kapag",
+        -12.55911219597298
+      ],
+      [
+        "▁going",
+        -12.58788226358258
+      ],
+      [
+        "▁papuntahin",
+        -12.588367424993526
+      ],
+      [
+        "▁Sa",
+        -12.588766106450244
+      ],
+      [
+        "▁galing",
+        -12.612146364873963
+      ],
+      [
+        "'d",
+        -12.61763704795482
+      ],
+      [
+        "sinusulat",
+        -12.620093086312176
+      ],
+      [
+        "inuman",
+        -12.631671616186884
+      ],
+      [
+        "▁inuman",
+        -12.642294670490724
+      ],
+      [
+        "/",
+        -12.65193700113068
+      ],
+      [
+        "▁ma",
+        -12.65236848654521
+      ],
+      [
+        "▁makipaglaro",
+        -12.653231905842963
+      ],
+      [
+        "kainin",
+        -12.671327785305236
+      ],
+      [
+        "aan",
+        -12.676865440797316
+      ],
+      [
+        "▁Are",
+        -12.689663515143195
+      ],
+      [
+        "binabasa",
+        -12.695039909229866
+      ],
+      [
+        "umunta",
+        -12.69897283295372
+      ],
+      [
+        "▁Th",
+        -12.71094663249292
+      ],
+      [
+        "kakain",
+        -12.721751662168764
+      ],
+      [
+        "▁nanggaling",
+        -12.723953307670726
+      ],
+      [
+        "coming",
+        -12.752057451190009
+      ],
+      [
+        "pupunta",
+        -12.75318739861177
+      ],
+      [
+        "▁maka",
+        -12.756981230484914
+      ],
+      [
+        "▁takbuhan",
+        -12.75725319439476
+      ],
+      [
+        "▁happen",
+        -12.798620626917051
+      ],
+      [
+        "▁lumakad",
+        -12.799258379187702
+      ],
+      [
+        "aki",
+        -12.817907760299647
+      ],
+      [
+        "ilan",
+        -12.824492622315326
+      ],
+      [
+        "EE",
+        -12.831729332750056
+      ],
+      [
+        "akatulog",
+        -12.858747504182508
+      ],
+      [
+        "▁(",
+        -12.864403878831844
+      ],
+      [
+        "▁pag-",
+        -12.878850375390014
+      ],
+      [
+        "▁nangangailangan",
+        -12.884303973848382
+      ],
+      [
+        "ate",
+        -12.89840270568468
+      ],
+      [
+        "mahi",
+        -12.90525536160156
+      ],
+      [
+        "takbuhin",
+        -12.905832914749157
+      ],
+      [
+        "▁can",
+        -12.908976095981991
+      ],
+      [
+        "▁sasama",
+        -12.910597247779096
+      ],
+      [
+        "muwi",
+        -12.920248942115588
+      ],
+      [
+        "▁Gustong",
+        -12.939132806307896
+      ],
+      [
+        "nilalakad",
+        -12.941011407775523
+      ],
+      [
+        "-",
+        -12.948276060835417
+      ],
+      [
+        "ó",
+        -12.949033168779518
+      ],
+      [
+        "th",
+        -12.94912399235384
+      ],
+      [
+        "▁wala",
+        -12.95448516186634
+      ],
+      [
+        "▁dream",
+        -12.970950064597076
+      ],
+      [
+        "▁patulugin",
+        -12.973333847024197
+      ],
+      [
+        "▁gina",
+        -12.975477499214778
+      ],
+      [
+        "writing",
+        -12.977429453623404
+      ],
+      [
+        "▁writ",
+        -12.98275587134198
+      ],
+      [
+        "magsulat",
+        -12.984628021963754
+      ],
+      [
+        "natulog",
+        -13.000497016202043
+      ],
+      [
+        "nasa",
+        -13.00421815608926
+      ],
+      [
+        "yan",
+        -13.016390368622504
+      ],
+      [
+        "magbabasa",
+        -13.02204440179868
+      ],
+      [
+        "pumupunta",
+        -13.0274417095355
+      ],
+      [
+        "▁i",
+        -13.029613580970231
+      ],
+      [
+        "eats",
+        -13.039260158437818
+      ],
+      [
+        "▁akin",
+        -13.042300061210614
+      ],
+      [
+        "papunta",
+        -13.043685783399884
+      ],
+      [
+        "agtatrabaho",
+        -13.044618048388894
+      ],
+      [
+        "sulatan",
+        -13.05344760784158
+      ],
+      [
+        "iya",
+        -13.065646318980145
+      ],
+      [
+        "▁bring",
+        -13.070275272625144
+      ],
+      [
+        "▁pinunta",
+        -13.071175540902434
+      ],
+      [
+        "▁on/with",
+        -13.071838731855529
+      ],
+      [
+        "▁pag-uwi",
+        -13.072456435614663
+      ],
+      [
+        "▁magugustuhan",
+        -13.073533883864854
+      ],
+      [
+        "matutulog",
+        -13.093407788922931
+      ],
+      [
+        "tinatakbo",
+        -13.102014146141052
+      ],
+      [
+        "▁iyo",
+        -13.115924197732376
+      ],
+      [
+        "ahil",
+        -13.146904904712452
+      ],
+      [
+        "▁on/",
+        -13.150340577188173
+      ],
+      [
+        "▁whi",
+        -13.161145836346485
+      ],
+      [
+        "us",
+        -13.17061081560568
+      ],
+      [
+        "kinakain",
+        -13.172405461982905
+      ],
+      [
+        "maglalakad",
+        -13.18640875292108
+      ],
+      [
+        "▁ano",
+        -13.187388496078649
+      ],
+      [
+        "umuwi",
+        -13.20390011624554
+      ],
+      [
+        "▁pu",
+        -13.205121270047396
+      ],
+      [
+        "iniinom",
+        -13.218331468605268
+      ],
+      [
+        "nagbasa",
+        -13.22259686786614
+      ],
+      [
+        "sleeping",
+        -13.239510792919646
+      ],
+      [
+        "is",
+        -13.241935771503748
+      ],
+      [
+        "writes",
+        -13.246576755831937
+      ],
+      [
+        "lakarin",
+        -13.252126666021349
+      ],
+      [
+        "reads",
+        -13.267684899092842
+      ],
+      [
+        "ulugan",
+        -13.273564797233693
+      ],
+      [
+        "inulat",
+        -13.283342201516009
+      ],
+      [
+        "akapunta",
+        -13.284539137116262
+      ],
+      [
+        "▁makapunta",
+        -13.307134470775392
+      ],
+      [
+        "▁to/",
+        -13.31213896218778
+      ],
+      [
+        "▁ginusto",
+        -13.312808071094018
+      ],
+      [
+        "umus",
+        -13.319420287108771
+      ],
+      [
+        "hi",
+        -13.32605891204451
+      ],
+      [
+        "▁I'",
+        -13.343669652918331
+      ],
+      [
+        "▁meet",
+        -13.34613726186455
+      ],
+      [
+        "who",
+        -13.371397892099829
+      ],
+      [
+        "maglalaro",
+        -13.37308350103174
+      ],
+      [
+        "ak",
+        -13.375851903357702
+      ],
+      [
+        "drank",
+        -13.388396607457867
+      ],
+      [
+        "kasa",
+        -13.393365421138151
+      ],
+      [
+        "reading",
+        -13.39714481739523
+      ],
+      [
+        "naglakad",
+        -13.410522172445074
+      ],
+      [
+        "▁tinutul",
+        -13.4125975259901
+      ],
+      [
+        "nilalaro",
+        -13.431590267670536
+      ],
+      [
+        "▁sh",
+        -13.438549589000232
+      ],
+      [
+        "ring",
+        -13.440755539004776
+      ],
+      [
+        "▁h",
+        -13.444210242340358
+      ],
+      [
+        "▁makatakbo",
+        -13.448497937416938
+      ],
+      [
+        "▁makakapunta",
+        -13.449118989093757
+      ],
+      [
+        "ot",
+        -13.487681950513522
+      ],
+      [
+        "nagin",
+        -13.4899319678345
+      ],
+      [
+        "e/",
+        -13.49027201136643
+      ],
+      [
+        "akain",
+        -13.49452018775112
+      ],
+      [
+        "▁A",
+        -13.504048132315104
+      ],
+      [
+        "sulat",
+        -13.506148756290592
+      ],
+      [
+        "ar",
+        -13.50765096859933
+      ],
+      [
+        "▁plan",
+        -13.50807970146646
+      ],
+      [
+        "▁M",
+        -13.534554101467055
+      ],
+      [
+        "eating",
+        -13.54341463681401
+      ],
+      [
+        "▁tulugan",
+        -13.548177319081818
+      ],
+      [
+        "ugan",
+        -13.553893654282168
+      ],
+      [
+        "wrote",
+        -13.558243217188782
+      ],
+      [
+        "▁an",
+        -13.559871505908522
+      ],
+      [
+        "▁wa",
+        -13.56682285682339
+      ],
+      [
+        "▁trabah",
+        -13.587724904110264
+      ],
+      [
+        "may",
+        -13.595259010430407
+      ],
+      [
+        "angyari",
+        -13.596063968990318
+      ],
+      [
+        "books",
+        -13.596388912283077
+      ],
+      [
+        "naglaro",
+        -13.608565651818964
+      ],
+      [
+        "▁after",
+        -13.611188678005274
+      ],
+      [
+        "▁mangyari",
+        -13.613363229161877
+      ],
+      [
+        "▁gugustuhin",
+        -13.613961883959227
+      ],
+      [
+        "sama",
+        -13.636830961065634
+      ],
+      [
+        "drinking",
+        -13.644952849715086
+      ],
+      [
+        "▁pa",
+        -13.663124794760783
+      ],
+      [
+        "▁b",
+        -13.667762115587642
+      ],
+      [
+        "ipa",
+        -13.68022688313284
+      ],
+      [
+        "re",
+        -13.682499626183665
+      ],
+      [
+        "▁hi",
+        -13.70451044388196
+      ],
+      [
+        "rom",
+        -13.7133998094679
+      ],
+      [
+        "walking",
+        -13.7150078686958
+      ],
+      [
+        "akbo",
+        -13.733914569223309
+      ],
+      [
+        "running",
+        -13.747258997454272
+      ],
+      [
+        "▁nak",
+        -13.752799767003944
+      ],
+      [
+        "▁(to",
+        -13.771593090600325
+      ],
+      [
+        "▁Do",
+        -13.775690257708124
+      ],
+      [
+        "isinusulat",
+        -13.785800417488083
+      ],
+      [
+        "▁lalakad",
+        -13.79049711235096
+      ],
+      [
+        "nagsusulat",
+        -13.792317709793757
+      ],
+      [
+        "inusto",
+        -13.799328091918014
+      ],
+      [
+        "▁shift",
+        -13.809294175459506
+      ],
+      [
+        "▁kinaka",
+        -13.810463136853434
+      ],
+      [
+        "▁lumalakad",
+        -13.811318069984624
+      ],
+      [
+        "▁makakarating",
+        -13.81209392712504
+      ],
+      [
+        "▁pinapat",
+        -13.81621179122073
+      ],
+      [
+        "Kanino",
+        -13.818518991874871
+      ],
+      [
+        "▁buma",
+        -13.819732838414032
+      ],
+      [
+        "▁nakasa",
+        -13.83106939799411
+      ],
+      [
+        "to/for",
+        -13.833654271494806
+      ],
+      [
+        "▁Si",
+        -13.83737878877175
+      ],
+      [
+        "pauwi",
+        -13.8393411829247
+      ],
+      [
+        "▁kagabi",
+        -13.84761877501502
+      ],
+      [
+        "me",
+        -13.851536950370532
+      ],
+      [
+        "Kakai",
+        -13.855267497539597
+      ],
+      [
+        "rou",
+        -13.863095037910972
+      ],
+      [
+        "▁katulog",
+        -13.863421241727618
+      ],
+      [
+        "from",
+        -13.864784210155182
+      ],
+      [
+        "▁napa",
+        -13.8685572132464
+      ],
+      [
+        "Susulat",
+        -13.868657820213784
+      ],
+      [
+        "basahan",
+        -13.8917475215728
+      ],
+      [
+        "▁bookstore",
+        -13.897374593357169
+      ],
+      [
+        "kinailangan",
+        -13.90653453097809
+      ],
+      [
+        "pas",
+        -13.907484238742423
+      ],
+      [
+        "para",
+        -13.915206167741973
+      ],
+      [
+        "▁Bina",
+        -13.92075925771938
+      ],
+      [
+        "klase",
+        -13.983857720737737
+      ],
+      [
+        "▁makiki",
+        -13.99139225413835
+      ],
+      [
+        "▁lakaran",
+        -13.994644300766216
+      ],
+      [
+        "▁ar",
+        -14.000630659020644
+      ],
+      [
+        "▁eve",
+        -14.001521793433476
+      ],
+      [
+        "playing",
+        -14.01286616215832
+      ],
+      [
+        "▁paka",
+        -14.031448907141089
+      ],
+      [
+        "▁ak",
+        -14.032948726442909
+      ],
+      [
+        "inasa",
+        -14.039508858731915
+      ],
+      [
+        "▁go",
+        -14.043500942889024
+      ],
+      [
+        "runs",
+        -14.046257805135038
+      ],
+      [
+        "sinusulatan",
+        -14.048613354863878
+      ],
+      [
+        "laro",
+        -14.049651185972031
+      ],
+      [
+        "▁visit",
+        -14.056330870678988
+      ],
+      [
+        "▁makalakad",
+        -14.05842916450868
+      ],
+      [
+        "▁pina",
+        -14.063998277727888
+      ],
+      [
+        "kipaglaro",
+        -14.08124933768072
+      ],
+      [
+        "▁through",
+        -14.089520453511222
+      ],
+      [
+        "uuwi",
+        -14.103905531576594
+      ],
+      [
+        "whe",
+        -14.128012267186143
+      ],
+      [
+        "puntahan",
+        -14.143631226688695
+      ],
+      [
+        "▁com",
+        -14.164856865120749
+      ],
+      [
+        "▁makaka",
+        -14.185245132254328
+      ],
+      [
+        "▁nakita",
+        -14.190084288029684
+      ],
+      [
+        "▁maki",
+        -14.19176857855223
+      ],
+      [
+        "▁may",
+        -14.224027629725038
+      ],
+      [
+        "walks",
+        -14.231413975480631
+      ],
+      [
+        "uha",
+        -14.239828633784295
+      ],
+      [
+        "ming",
+        -14.248137827092648
+      ],
+      [
+        "uhan",
+        -14.250201533192804
+      ],
+      [
+        "ung",
+        -14.251469267711483
+      ],
+      [
+        "nd",
+        -14.256205462258333
+      ],
+      [
+        "umuuwi",
+        -14.279554520577022
+      ],
+      [
+        "akauwi",
+        -14.287343691980372
+      ],
+      [
+        "kasal",
+        -14.290653451107666
+      ],
+      [
+        "▁Um",
+        -14.312113548403104
+      ],
+      [
+        "gamit",
+        -14.33424021176842
+      ],
+      [
+        "▁baha",
+        -14.342469733881885
+      ],
+      [
+        "pagtulog",
+        -14.371025509429346
+      ],
+      [
+        "▁nangya",
+        -14.375591492870177
+      ],
+      [
+        "agugustuhan",
+        -14.377730826046696
+      ],
+      [
+        "▁available",
+        -14.37800142276013
+      ],
+      [
+        "▁towards",
+        -14.378001426585769
+      ],
+      [
+        "on/through",
+        -14.3780026950898
+      ],
+      [
+        "▁makarating",
+        -14.378235262518348
+      ],
+      [
+        "▁magpa",
+        -14.378674406769704
+      ],
+      [
+        "yari",
+        -14.380525275859103
+      ],
+      [
+        "ive",
+        -14.383955028958958
+      ],
+      [
+        "able",
+        -14.387708550551272
+      ],
+      [
+        "▁Duma",
+        -14.388197157765529
+      ],
+      [
+        "papa",
+        -14.388298321998462
+      ],
+      [
+        "amin",
+        -14.38953444182138
+      ],
+      [
+        "▁bahay)",
+        -14.389629812291332
+      ],
+      [
+        "asama",
+        -14.39355863612876
+      ],
+      [
+        "ra",
+        -14.402587022211153
+      ],
+      [
+        "makakasama",
+        -14.40584971121014
+      ],
+      [
+        "abi",
+        -14.405908218788884
+      ],
+      [
+        "eskuwelahan",
+        -14.408663595550404
+      ],
+      [
+        "akipaglaro",
+        -14.425121565501485
+      ],
+      [
+        "plays",
+        -14.437995941949284
+      ],
+      [
+        "▁wal",
+        -14.450384011035457
+      ],
+      [
+        "Does",
+        -14.464621892003514
+      ],
+      [
+        "▁(s",
+        -14.467234996197435
+      ],
+      [
+        "▁some",
+        -14.467499985467423
+      ],
+      [
+        "binasa",
+        -14.477069503866415
+      ],
+      [
+        "▁mak",
+        -14.513765904973374
+      ],
+      [
+        "paano",
+        -14.523933822908884
+      ],
+      [
+        "nagustuhan",
+        -14.530540580450715
+      ],
+      [
+        "lakaran",
+        -14.53555690258636
+      ],
+      [
+        "usu",
+        -14.538712896418623
+      ],
+      [
+        "▁tinatakb",
+        -14.5516185403815
+      ],
+      [
+        "arrive",
+        -14.55459766682382
+      ],
+      [
+        "slept",
+        -14.563449061827002
+      ],
+      [
+        "kakasama",
+        -14.564853340492986
+      ],
+      [
+        "or",
+        -14.570354814327596
+      ],
+      [
+        "▁tak",
+        -14.593890341144114
+      ],
+      [
+        "kin",
+        -14.600614194944455
+      ],
+      [
+        "patungo",
+        -14.604086396079444
+      ],
+      [
+        "babasah",
+        -14.607367488428164
+      ],
+      [
+        "how",
+        -14.66472636870587
+      ],
+      [
+        "▁naka",
+        -14.66902006980791
+      ],
+      [
+        "▁rea",
+        -14.67598000379207
+      ],
+      [
+        "paglaro",
+        -14.67970411200858
+      ],
+      [
+        "▁Kanin",
+        -14.68555813086324
+      ],
+      [
+        "He",
+        -14.74535636903452
+      ],
+      [
+        "▁nara",
+        -14.760706413283147
+      ],
+      [
+        "ihigaan",
+        -14.769059886196231
+      ],
+      [
+        "We",
+        -14.784443424531895
+      ],
+      [
+        "kailan",
+        -14.79518270420931
+      ],
+      [
+        "walked",
+        -14.796837884635154
+      ],
+      [
+        "ay",
+        -14.80170433908072
+      ],
+      [
+        "dah",
+        -14.81157333510852
+      ],
+      [
+        "▁magi",
+        -14.81850494939112
+      ],
+      [
+        "tinu",
+        -14.852139293285784
+      ],
+      [
+        "lalakad",
+        -14.860868955225218
+      ],
+      [
+        "nabasa",
+        -14.864597726662549
+      ],
+      [
+        "basa",
+        -14.874645212707488
+      ],
+      [
+        "pagbasa",
+        -14.877797439223045
+      ],
+      [
+        "á",
+        -14.878001422800086
+      ],
+      [
+        "▁manggagaling",
+        -14.878001422955483
+      ],
+      [
+        "▁puwede",
+        -14.878001460278798
+      ],
+      [
+        "▁impos",
+        -14.878001508037023
+      ],
+      [
+        "▁natin/namin",
+        -14.878001529837514
+      ],
+      [
+        "▁(for)",
+        -14.878001697566685
+      ],
+      [
+        "▁nakakarating",
+        -14.878004811163397
+      ],
+      [
+        "▁manage",
+        -14.878007818202988
+      ],
+      [
+        "▁samahan",
+        -14.87801632660024
+      ],
+      [
+        "▁hinihigaan/",
+        -14.878029156383535
+      ],
+      [
+        "/pupunta",
+        -14.87805363224874
+      ],
+      [
+        "▁attend",
+        -14.878065377947369
+      ],
+      [
+        "▁sasamahan",
+        -14.87809302402466
+      ],
+      [
+        "▁nagkagusto",
+        -14.878112597781854
+      ],
+      [
+        "▁evening",
+        -14.878212405529746
+      ],
+      [
+        "▁patu",
+        -14.878471651202693
+      ],
+      [
+        "akakapunta",
+        -14.879573132579376
+      ],
+      [
+        "paglalakad",
+        -14.880204084688266
+      ],
+      [
+        "lang",
+        -14.88132051866557
+      ],
+      [
+        "katulog",
+        -14.8885612395112
+      ],
+      [
+        "akailanganin",
+        -14.89082556537271
+      ],
+      [
+        "/with",
+        -14.893149867969283
+      ],
+      [
+        "akapagbasa",
+        -14.89513241426813
+      ],
+      [
+        "akarating",
+        -14.89566128655595
+      ],
+      [
+        "agtra",
+        -14.911380573723758
+      ],
+      [
+        "sin",
+        -14.91314005884947
+      ],
+      [
+        "angailangan",
+        -14.918165642058105
+      ],
+      [
+        "aba",
+        -14.91988478526554
+      ],
+      [
+        "▁(o",
+        -14.926712513722094
+      ],
+      [
+        "ila",
+        -14.93310866334183
+      ],
+      [
+        "▁mag",
+        -14.93326572660391
+      ],
+      [
+        "dating",
+        -14.941831578986283
+      ],
+      [
+        "▁nakaka",
+        -14.953232368875035
+      ],
+      [
+        "kakainin",
+        -14.956708475908544
+      ],
+      [
+        "Nasa",
+        -14.958118376387546
+      ],
+      [
+        "ginaga",
+        -14.98140890759054
+      ],
+      [
+        "▁dina",
+        -14.98281724489515
+      ],
+      [
+        "pan",
+        -14.993474182993298
+      ],
+      [
+        "tutulog",
+        -15.011553732456274
+      ],
+      [
+        "▁hihiga",
+        -15.015791385263247
+      ],
+      [
+        "galing",
+        -15.024646652939603
+      ],
+      [
+        "ca",
+        -15.035250925578646
+      ],
+      [
+        "them",
+        -15.03879019642788
+      ],
+      [
+        "gbabasa",
+        -15.04081131616215
+      ],
+      [
+        "araw",
+        -15.056329416904331
+      ],
+      [
+        "▁makain",
+        -15.05649954571832
+      ],
+      [
+        "▁pinupunta",
+        -15.059401484502503
+      ],
+      [
+        "kanin",
+        -15.066756997770623
+      ],
+      [
+        "▁makapag",
+        -15.076035506679474
+      ],
+      [
+        "▁on/a",
+        -15.08232727996838
+      ],
+      [
+        "kanila",
+        -15.084842439056592
+      ],
+      [
+        "pl",
+        -15.102803032162347
+      ],
+      [
+        "▁sulat",
+        -15.1130657852202
+      ],
+      [
+        "kinain",
+        -15.145337543104816
+      ],
+      [
+        "mala",
+        -15.152089920401083
+      ],
+      [
+        "Did",
+        -15.187393712033034
+      ],
+      [
+        "▁kinasa",
+        -15.192353653436443
+      ],
+      [
+        "▁R",
+        -15.217779184260642
+      ],
+      [
+        "▁patungo",
+        -15.252291433203176
+      ],
+      [
+        "babasa",
+        -15.252461043376474
+      ],
+      [
+        "makain",
+        -15.265001216182108
+      ],
+      [
+        "eskuwela",
+        -15.269347201599262
+      ],
+      [
+        "▁bag",
+        -15.2733418013129
+      ],
+      [
+        "▁pla",
+        -15.283286333784105
+      ],
+      [
+        "wh",
+        -15.295549180303066
+      ],
+      [
+        "ma",
+        -15.297626779299415
+      ],
+      [
+        "ting",
+        -15.33838679094759
+      ],
+      [
+        "meet",
+        -15.373368825324766
+      ],
+      [
+        "usulatan",
+        -15.380422513718116
+      ],
+      [
+        "▁nag",
+        -15.414051525419648
+      ],
+      [
+        "▁tin",
+        -15.454620864830527
+      ],
+      [
+        "eskwelahan",
+        -15.456745320594983
+      ],
+      [
+        "wo",
+        -15.468877468884946
+      ],
+      [
+        "ab",
+        -15.471154340771236
+      ],
+      [
+        "▁pum",
+        -15.471400038934297
+      ],
+      [
+        "▁suma",
+        -15.474781886876428
+      ],
+      [
+        "pinupunta",
+        -15.518763813104291
+      ],
+      [
+        "pinan",
+        -15.528283742362936
+      ],
+      [
+        "ding",
+        -15.544738475868922
+      ],
+      [
+        "takbuhan",
+        -15.561286713898
+      ],
+      [
+        "▁Nagba",
+        -15.581619946059268
+      ],
+      [
+        "▁Babasa",
+        -15.582140426639858
+      ],
+      [
+        "▁par",
+        -15.598313244404244
+      ],
+      [
+        "gar",
+        -15.601742371261622
+      ],
+      [
+        "/for",
+        -15.602619000339374
+      ],
+      [
+        "▁me",
+        -15.60891465879536
+      ],
+      [
+        "ha",
+        -15.620132523332815
+      ],
+      [
+        "▁re",
+        -15.623459340416746
+      ],
+      [
+        "sasama",
+        -15.653743292799131
+      ],
+      [
+        "ling",
+        -15.657570018625144
+      ],
+      [
+        "makatulog",
+        -15.663442313299637
+      ],
+      [
+        "numan",
+        -15.666570348467516
+      ],
+      [
+        "eskwela",
+        -15.667904336436097
+      ],
+      [
+        "puma",
+        -15.673076821750245
+      ],
+      [
+        "umula",
+        -15.692425500307063
+      ],
+      [
+        "pag",
+        -15.702517491896304
+      ],
+      [
+        "pagdating",
+        -15.705406907369804
+      ],
+      [
+        "nanggagaling",
+        -15.709057756646583
+      ],
+      [
+        "▁sum",
+        -15.715739517439486
+      ],
+      [
+        "▁makapagla",
+        -15.71745789438667
+      ],
+      [
+        "▁makap",
+        -15.731021465481
+      ],
+      [
+        "lalaru",
+        -15.742423252958108
+      ],
+      [
+        "wa",
+        -15.762679117658385
+      ],
+      [
+        "ble",
+        -15.762694960546158
+      ],
+      [
+        "▁Umu",
+        -15.776778625949175
+      ],
+      [
+        "tinakbo",
+        -15.797841713226592
+      ],
+      [
+        "▁Naglak",
+        -15.801037360499178
+      ],
+      [
+        "▁arriv",
+        -15.808212078302445
+      ],
+      [
+        "ayan",
+        -15.813379066078037
+      ],
+      [
+        "usulat",
+        -15.821502315781697
+      ],
+      [
+        "leep",
+        -15.828380469676189
+      ],
+      [
+        "▁Nag",
+        -15.841397848582377
+      ],
+      [
+        "v",
+        -15.842073544563394
+      ],
+      [
+        "higaan",
+        -15.843239186351294
+      ],
+      [
+        "▁tinul",
+        -15.866651495502795
+      ],
+      [
+        "punta",
+        -15.870391680152496
+      ],
+      [
+        "▁kinatu",
+        -15.87154255621152
+      ],
+      [
+        "▁nakakasa",
+        -15.873805817164063
+      ],
+      [
+        "ugustuhin",
+        -15.876309953082355
+      ],
+      [
+        "▁magsusu",
+        -15.877168974836897
+      ],
+      [
+        "atulugin",
+        -15.877997617509848
+      ],
+      [
+        "j",
+        -15.878001422800084
+      ],
+      [
+        "▁pagp",
+        -15.879170496719937
+      ],
+      [
+        "▁darat",
+        -15.881520465798074
+      ],
+      [
+        "ve",
+        -15.883652630585749
+      ],
+      [
+        "ag-",
+        -15.891163212542454
+      ],
+      [
+        "▁kum",
+        -15.89234809458708
+      ],
+      [
+        "▁makakasa",
+        -15.893173146166207
+      ],
+      [
+        "▁pagka",
+        -15.894631911932573
+      ],
+      [
+        "▁nakapag",
+        -15.895399295277045
+      ],
+      [
+        "▁lib",
+        -15.903280998005975
+      ],
+      [
+        "ilalakad",
+        -15.909095689357354
+      ],
+      [
+        "lalakar",
+        -15.91987281089752
+      ],
+      [
+        "aaral",
+        -15.924899214481757
+      ],
+      [
+        "apas",
+        -15.926517638066164
+      ],
+      [
+        "pon",
+        -15.927887573215008
+      ],
+      [
+        "▁na",
+        -15.92798347366404
+      ],
+      [
+        "▁duma",
+        -15.928995752254403
+      ],
+      [
+        "akatakbo",
+        -15.937467593776924
+      ],
+      [
+        "kakailanganin",
+        -15.946277055568336
+      ],
+      [
+        "apo",
+        -15.967055902913833
+      ],
+      [
+        "luga",
+        -15.9691746327241
+      ],
+      [
+        "▁babasa",
+        -15.969231339909808
+      ],
+      [
+        "it",
+        -16.00104162108801
+      ],
+      [
+        "▁nang",
+        -16.008132296109164
+      ],
+      [
+        "ami",
+        -16.012754672490836
+      ],
+      [
+        "lalakaran",
+        -16.019521284499067
+      ],
+      [
+        "pagtakbo",
+        -16.024845658689678
+      ],
+      [
+        "tin",
+        -16.027664176964016
+      ],
+      [
+        "/na",
+        -16.04040974210067
+      ],
+      [
+        "baha",
+        -16.077964401494913
+      ],
+      [
+        "ooks",
+        -16.09527213204298
+      ],
+      [
+        "gayon",
+        -16.09687034253572
+      ],
+      [
+        "on)",
+        -16.121643839480654
+      ],
+      [
+        "pinupuntahan",
+        -16.13673413055304
+      ],
+      [
+        "▁matu",
+        -16.14958627669813
+      ],
+      [
+        "▁even",
+        -16.17443891973173
+      ],
+      [
+        "upuntahan",
+        -16.18763200222775
+      ],
+      [
+        "him",
+        -16.197183807612948
+      ],
+      [
+        "▁pag",
+        -16.21034999708344
+      ],
+      [
+        "akakasama",
+        -16.21568175097059
+      ],
+      [
+        "▁pak",
+        -16.223383169796936
+      ],
+      [
+        "ho",
+        -16.224205527715196
+      ],
+      [
+        "▁si",
+        -16.2531999628168
+      ],
+      [
+        "pang",
+        -16.25646169646798
+      ],
+      [
+        "pinapa",
+        -16.27132061255068
+      ],
+      [
+        "/th",
+        -16.278328937768055
+      ],
+      [
+        "▁p",
+        -16.376446952200617
+      ],
+      [
+        "▁di",
+        -16.387194829573414
+      ],
+      [
+        "▁natutul",
+        -16.428392230855227
+      ],
+      [
+        "Wala",
+        -16.432151678930865
+      ],
+      [
+        "glalaro",
+        -16.455716684400098
+      ],
+      [
+        "yo",
+        -16.46520486352979
+      ],
+      [
+        "mag",
+        -16.48341944853046
+      ],
+      [
+        "▁iinum",
+        -16.485231146327763
+      ],
+      [
+        "doing",
+        -16.50893505861375
+      ],
+      [
+        "▁makala",
+        -16.529345056965585
+      ],
+      [
+        "▁inii",
+        -16.586532517270093
+      ],
+      [
+        "pagpunta",
+        -16.600410955611416
+      ],
+      [
+        "Pa",
+        -16.61224667772325
+      ],
+      [
+        "kara",
+        -16.625621023290325
+      ],
+      [
+        "hinihigaan",
+        -16.64437293938979
+      ],
+      [
+        "aro",
+        -16.645243489842077
+      ],
+      [
+        "lugan",
+        -16.691601743104332
+      ],
+      [
+        "glalakad",
+        -16.727498795308403
+      ],
+      [
+        "have",
+        -16.752358233291037
+      ],
+      [
+        "▁pat",
+        -16.758037374182543
+      ],
+      [
+        "gaga",
+        -16.769328695673913
+      ],
+      [
+        "oes",
+        -16.773014233993685
+      ],
+      [
+        "ro",
+        -16.776548962815898
+      ],
+      [
+        "▁kakai",
+        -16.799690499348714
+      ],
+      [
+        "Kuma",
+        -16.825164055629347
+      ],
+      [
+        "makasa",
+        -16.89366287721689
+      ],
+      [
+        "uma",
+        -16.939714117483184
+      ],
+      [
+        "▁kala",
+        -16.96478950249788
+      ],
+      [
+        "omorrow",
+        -16.984639831393704
+      ],
+      [
+        "un",
+        -17.183710231861223
+      ],
+      [
+        "trabah",
+        -17.20635794997299
+      ],
+      [
+        "(",
+        -17.248532048894525
+      ],
+      [
+        "patakbuhin",
+        -17.248532048894525
+      ]
+    ],
+    "byte_fallback": false
+  }
+}

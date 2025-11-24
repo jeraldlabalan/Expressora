@@ -8,7 +8,6 @@ import com.example.expressora.recognition.model.ModelSignature
 import com.example.expressora.recognition.grpc.LandmarkStreamer
 import com.example.expressora.recognition.pipeline.RecognitionViewModelFactory
 import com.example.expressora.recognition.tflite.TfLiteRecognitionEngine
-import com.example.expressora.recognition.utils.DeviceCapabilityDetector
 import com.example.expressora.recognition.utils.LogUtils
 import com.example.expressora.utils.NetworkUtils
 import org.json.JSONObject
@@ -17,81 +16,39 @@ import android.content.SharedPreferences
 object RecognitionProvider {
     private const val TAG = "RecognitionProvider"
     
-    // Model selection order: FP32 (default) → FP16 → INT8
-    // FP32 is recommended for best accuracy and simplicity (no quantization needed)
-    private val MODEL_CANDIDATES = listOf(
-        "expressora_unified.tflite",
-        "expressora_unified_fp16.tflite",
-        "expressora_unified_int8.tflite"
-    )
+    // FP32 model is forced - no other models are used
+    private const val FP32_MODEL = "recognition/expressora_unified_v3.tflite"
     
-    private const val SIGNATURE_ASSET = "model_signature.json"
-    private const val LABELS_ASSET = "expressora_labels.json"
-    private const val LABELS_MAPPED_ASSET = "expressora_labels_mapped.json"
-    private const val HAND_TASK_ASSET = "hand_landmarker.task"
-    const val HOLISTIC_TASK_ASSET = "holistic_landmarker.task"
+    private const val SIGNATURE_ASSET = "recognition/model_signature.json"
+    private const val LABELS_ASSET = "recognition/labels.json"
+    private const val LABELS_MAPPED_ASSET = "recognition/expressora_labels_mapped.json"
+    private const val HAND_TASK_ASSET = "recognition/hand_landmarker.task"
+    const val HOLISTIC_TASK_ASSET = "recognition/holistic_landmarker.task"
     
-    // Feature scaling files (required for retrained model)
-    const val FEATURE_MEAN_ASSET = "feature_mean.npy"
-    const val FEATURE_STD_ASSET = "feature_std.npy"
+    // Feature scaling files (required for retrained model) - Version 2
+    const val FEATURE_MEAN_ASSET = "recognition/feature_mean_v2.npy"
+    const val FEATURE_STD_ASSET = "recognition/feature_std_v2.npy"
 
-    // Unified model operates on two hands (21 landmarks * 3 coordinates * 2 hands)
+    // Holistic LSTM model operates on sequences: 30 frames × 237 features per frame
+    // Features per frame: Left Hand (63) + Right Hand (63) + Face (111) = 237
+    // Total input size: 30 frames × 237 features = 7110 (flattened) or [1, 30, 237] (3D tensor)
     const val TWO_HANDS: Boolean = true
-    const val FEATURE_DIM: Int = 126
+    const val FEATURE_DIM: Int = 7110 // 30 frames × 237 features per frame
+    const val FEATURES_PER_FRAME: Int = 237 // Left Hand (63) + Right Hand (63) + Face (111)
+    const val SEQUENCE_LENGTH: Int = 30 // Number of frames in sequence
     
     // Thresholds
     const val GLOSS_CONFIDENCE_THRESHOLD = 0.65f
     const val ORIGIN_CONFIDENCE_THRESHOLD = 0.70f
 
-    private var selectedModel: String? = null
+    // Removed selectedModel caching - always return FP32 model directly
     private var modelSignature: ModelSignature? = null
 
     fun selectModel(context: Context): String {
-        if (selectedModel != null) {
-            LogUtils.d(TAG) { "Using cached model selection: $selectedModel" }
-            return selectedModel!!
-        }
-        
-        // Check device capabilities for optimal model selection
-        val capabilities = DeviceCapabilityDetector.checkCapabilities(context)
-        val recommendedModelType = capabilities.recommendedModelType
-        val recommendedFilename = DeviceCapabilityDetector.getModelFilename(recommendedModelType)
-        
-        LogUtils.d(TAG) {
-            "Device capabilities: GPU=${capabilities.hasGpu}, NNAPI=${capabilities.hasNnapi}, " +
-            "Recommended: ${recommendedModelType.name} model"
-        }
-        
-        // Try recommended model first, then fall back to available models
-        val preferredOrder = listOf(recommendedFilename) + MODEL_CANDIDATES.filter { it != recommendedFilename }
-        
-        LogUtils.d(TAG) { "Selecting model from candidates: ${preferredOrder.joinToString()}" }
-        val chosen = preferredOrder.firstOrNull { candidate ->
-            val exists = runCatching {
-                context.assets.open(candidate).close()
-                true
-            }.getOrElse { false }
-            LogUtils.verboseIfVerbose(TAG) { "Checking model '$candidate': exists=$exists" }
-            exists
-        } ?: MODEL_CANDIDATES.last()
-        
-        selectedModel = chosen
-        val actualModelType = when {
-            chosen.contains("int8", ignoreCase = true) -> DeviceCapabilityDetector.ModelType.INT8
-            chosen.contains("fp16", ignoreCase = true) -> DeviceCapabilityDetector.ModelType.FP16
-            else -> DeviceCapabilityDetector.ModelType.FP32
-        }
-        
-        if (actualModelType != recommendedModelType) {
-            LogUtils.w(TAG) {
-                "Selected model ($chosen) differs from recommended (${recommendedModelType.name}). " +
-                "Recommended model may not be available in assets."
-            }
-        } else {
-            LogUtils.i(TAG) { "✅ Selected optimal model: $chosen (${actualModelType.name})" }
-        }
-        
-        return chosen
+        // FORCE FP32 MODEL - No device detection, no fallback, no caching, no other options
+        // This model expects Float32 inputs (28440 bytes) which matches what we generate
+        LogUtils.i(TAG) { "✅ FORCING FP32 model: $FP32_MODEL (Float32 inputs = 28440 bytes, LSTM compatible)" }
+        return FP32_MODEL
     }
     
     fun getModelSignature(context: Context): ModelSignature? {
@@ -138,23 +95,44 @@ object RecognitionProvider {
                 val mode = if (it.isMultiHead()) "multi-head (gloss + origin)" else "single-head (gloss only)"
                 Log.i(TAG, "Model signature: $mode, ${outputs.size} output(s)")
                 
-                // Validate input shape matches expected (126 features)
+                // Validate input shape matches expected LSTM model shape [1, 30, 237] or flattened [1, 7110]
                 val inputShape = inputs.firstOrNull()?.shape
                 if (inputShape != null && inputShape.isNotEmpty()) {
-                    val inputSize = inputShape.last() // Last dimension is feature count
-                    if (inputSize != FEATURE_DIM) {
-                        Log.w(TAG, "⚠️ Model input size mismatch: expected $FEATURE_DIM, got $inputSize from shape $inputShape")
-                    } else {
-                        Log.i(TAG, "✅ Model input shape validated: $inputShape (matches expected $FEATURE_DIM features)")
+                    // Check if it's a 3D tensor [Batch, Time, Features] or flattened [Batch, Features]
+                    when (inputShape.size) {
+                        3 -> {
+                            // 3D tensor: [Batch, Time, Features] = [1, 30, 237]
+                            val batch = inputShape[0]
+                            val time = inputShape[1]
+                            val features = inputShape[2]
+                            if (batch == 1 && time == SEQUENCE_LENGTH && features == FEATURES_PER_FRAME) {
+                                Log.i(TAG, "✅ Model input shape validated: $inputShape (matches expected [1, $SEQUENCE_LENGTH, $FEATURES_PER_FRAME])")
+                            } else {
+                                Log.w(TAG, "⚠️ Model input shape mismatch: expected [1, $SEQUENCE_LENGTH, $FEATURES_PER_FRAME], got $inputShape")
+                            }
+                        }
+                        2 -> {
+                            // Flattened: [Batch, Features] = [1, 7110]
+                            val batch = inputShape[0]
+                            val features = inputShape[1]
+                            if (batch == 1 && features == FEATURE_DIM) {
+                                Log.i(TAG, "✅ Model input shape validated: $inputShape (matches expected [1, $FEATURE_DIM] flattened)")
+                            } else {
+                                Log.w(TAG, "⚠️ Model input shape mismatch: expected [1, $FEATURE_DIM], got $inputShape")
+                            }
+                        }
+                        else -> {
+                            Log.w(TAG, "⚠️ Unexpected input shape dimensions: $inputShape (expected 2D or 3D tensor)")
+                        }
                     }
                 }
                 
-                // Validate output size (should be 197 classes for retrained model)
+                // Validate output size (should be 250 classes for new LSTM model)
                 val outputShape = outputs.firstOrNull()?.shape
                 if (outputShape != null && outputShape.isNotEmpty()) {
                     val outputSize = outputShape.last() // Last dimension is class count
                     Log.i(TAG, "Model output shape: $outputShape ($outputSize classes)")
-                    // Note: 197 is expected for retrained model, but we don't enforce it strictly
+                    // Note: 250 is expected for new LSTM model, but we don't enforce it strictly
                     // to allow for different model versions
                 }
             }
@@ -202,6 +180,13 @@ object RecognitionProvider {
         Log.d(TAG, "Creating TfLiteRecognitionEngine: model='$model', featureDim=$FEATURE_DIM, " +
                 "hasMultiHead=${signature?.isMultiHead()}")
         
+        // CRITICAL: Verify model is FP32 before creating engine
+        if (model != FP32_MODEL) {
+            Log.e(TAG, "❌ CRITICAL ERROR: Wrong model being loaded! Expected '$FP32_MODEL' (FP32), got: '$model'")
+        } else {
+            Log.i(TAG, "✅ Model verified: FP32 model '$model' will be used (v3)")
+        }
+        
         return TfLiteRecognitionEngine(
             context = context.applicationContext,
             modelAsset = model,
@@ -210,39 +195,28 @@ object RecognitionProvider {
             featureDim = FEATURE_DIM,
             modelSignature = signature
         ).also {
-            Log.i(TAG, "✅ RecognitionEngine created successfully")
+            Log.i(TAG, "✅ RecognitionEngine created successfully with model: '$model'")
         }
     }
 
     /**
      * Provide ViewModel factory with hybrid mode support (Tweak 3).
-     * Checks user preference for online/offline mode.
+     * Always provides BOTH engine and streamer to enable runtime switching.
      */
     fun provideViewModelFactory(context: Context): RecognitionViewModelFactory {
-        val prefs = context.getSharedPreferences("expressora_prefs", Context.MODE_PRIVATE)
-        val useOnlineMode = true // Re-enabled: Use server-side recognition (gRPC streaming)
+        // CRITICAL: Always provide both engine AND streamer for runtime switching
+        // This ensures that toggling between online/offline modes works instantly
+        val streamer = provideStreamer(context)
+        val engine = provideEngine(context)
         
-        Log.d(TAG, "Creating ViewModelFactory: useOnlineMode=$useOnlineMode")
+        Log.d(TAG, "Creating ViewModelFactory with both engine and streamer (runtime switching enabled)")
         
-        if (useOnlineMode) {
-            // Online mode: Create streamer
-            val streamer = provideStreamer(context)
-            return RecognitionViewModelFactory(
-                engine = null,
-                streamer = streamer,
-                context = context,
-                useOnlineMode = true
-            )
-        } else {
-            // Offline mode: Create TFLite engine (Tweak 3 - Fallback)
-            val engine = provideEngine(context)
-            return RecognitionViewModelFactory(
-                engine = engine,
-                streamer = null,
-                context = context,
-                useOnlineMode = false
-            )
-        }
+        return RecognitionViewModelFactory(
+            engine = engine,  // Always provide TFLite engine
+            streamer = streamer,  // Always provide gRPC streamer
+            context = context,
+            useOnlineMode = true  // Default start state (Online Mode)
+        )
     }
     
     /**
@@ -269,11 +243,8 @@ object RecognitionProvider {
     
     fun logDiagnostics(context: Context) {
         val model = selectModel(context)
-        val modelVariant = when {
-            model.contains("int8", ignoreCase = true) -> "INT8"
-            model.contains("fp16", ignoreCase = true) -> "FP16"
-            else -> "FP32"
-        }
+        // Always FP32 - no other models are used
+        val modelVariant = "FP32"
         
         val signature = getModelSignature(context)
         val outputMode = if (signature?.isMultiHead() == true) {
