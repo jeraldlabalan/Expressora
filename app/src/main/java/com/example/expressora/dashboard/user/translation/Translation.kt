@@ -207,18 +207,32 @@ class TranslationActivity : ComponentActivity(), TextToSpeech.OnInitListener {
 
                             val inferenceTimestamp = System.currentTimeMillis()
 
-                            holisticLandmarkOverlay?.let { overlay ->
-                                val analyzer = cameraAnalyzer
-                                val (imageWidth, imageHeight) = analyzer?.getFullImageDimensions() ?: Pair(640, 480)
+                            // Only update overlay when hands OR face are detected
+                            if (hasLeftHand || hasRightHand || hasFace) {
+                                holisticLandmarkOverlay?.let { overlay ->
+                                    val analyzer = cameraAnalyzer
+                                    val (imageWidth, imageHeight) = analyzer?.getFullImageDimensions() ?: Pair(640, 480)
 
-                                overlay.post {
-                                    overlay.setHolisticLandmarks(result, imageWidth, imageHeight, inferenceTimestamp)
-                                    Log.v(TAG, "📝 Overlay updated: result=${if (result != null) "not null" else "null"}, " +
-                                            "hands=${if (result?.leftHandLandmarks() != null) "L" else ""}${if (result?.rightHandLandmarks() != null) "R" else ""}, " +
-                                            "size=${imageWidth}x${imageHeight}, timestamp=$inferenceTimestamp")
+                                    overlay.post {
+                                        overlay.setHolisticLandmarks(result, imageWidth, imageHeight, inferenceTimestamp)
+                                        Log.v(TAG, "📝 Overlay updated: result=${if (result != null) "not null" else "null"}, " +
+                                                "hands=${if (result?.leftHandLandmarks() != null) "L" else ""}${if (result?.rightHandLandmarks() != null) "R" else ""}, " +
+                                                "size=${imageWidth}x${imageHeight}, timestamp=$inferenceTimestamp")
+                                    }
+                                } ?: run {
+                                    Log.w(TAG, "⚠️ holisticLandmarkOverlay is null - cannot update overlay")
                                 }
-                            } ?: run {
-                                Log.w(TAG, "⚠️ holisticLandmarkOverlay is null - cannot update overlay")
+                            } else {
+                                // Clear overlay when nothing is detected
+                                holisticLandmarkOverlay?.let { overlay ->
+                                    val analyzer = cameraAnalyzer
+                                    val (imageWidth, imageHeight) = analyzer?.getFullImageDimensions() ?: Pair(640, 480)
+
+                                    overlay.post {
+                                        overlay.setHolisticLandmarks(null, imageWidth, imageHeight, inferenceTimestamp)
+                                        Log.v(TAG, "🧹 Overlay cleared: no hands/face detected")
+                                    }
+                                }
                             }
 
                             val analyzer = cameraAnalyzer
@@ -309,6 +323,7 @@ class TranslationActivity : ComponentActivity(), TextToSpeech.OnInitListener {
             val isScanning by recognitionViewModel.isScanning.collectAsState()
             val translationResult by recognitionViewModel.translationResult.collectAsState()
             val isTranslating by recognitionViewModel.isTranslating.collectAsState()
+            val useOnlineMode by recognitionViewModel.useOnlineMode.collectAsState()
 
             LaunchedEffect(glossList) {
                 Log.d(TRANSLATION_SCREEN_TAG, "🖥️ UI: glossList changed: size=${glossList.size}, items=[${glossList.joinToString(", ")}]")
@@ -327,6 +342,12 @@ class TranslationActivity : ComponentActivity(), TextToSpeech.OnInitListener {
             }
             LaunchedEffect(isScanning) {
                 Log.i(TRANSLATION_SCREEN_TAG, "🔄 UI: isScanning state changed to: $isScanning")
+                if (!isScanning) {
+                    // Clear overlay when scanning stops
+                    val overlay = this@TranslationActivity.holisticLandmarkOverlay
+                    overlay?.post { overlay.clear() }
+                    Log.v(TAG, "🧹 Overlay cleared: scanning stopped")
+                }
             }
 
             var hasCameraPermission by remember { mutableStateOf(cameraPermissionGranted) }
@@ -412,7 +433,12 @@ class TranslationActivity : ComponentActivity(), TextToSpeech.OnInitListener {
                 translationResult = translationResult,
                 isTranslating = isTranslating,
                 onRemoveGloss = { recognitionViewModel.removeLastGloss() },
-                onConfirmTranslation = { recognitionViewModel.confirmTranslation() },
+                onConfirmTranslation = {
+                    // Clear overlay immediately when translation starts
+                    val overlay = this@TranslationActivity.holisticLandmarkOverlay
+                    overlay?.post { overlay.clear() }
+                    recognitionViewModel.confirmTranslation()
+                },
                 onResumeScanning = { recognitionViewModel.resumeScanning() },
                 onSetIsScanning = { value -> recognitionViewModel.setIsScanning(value) },
                 onDevPredict = {
@@ -464,7 +490,9 @@ class TranslationActivity : ComponentActivity(), TextToSpeech.OnInitListener {
                 startRecognitionEnabled = canStartRecognition && !recognitionStarted,
                 isInitializing = isInitializing,
                 handEngineInitialized = handEngineInitialized,
-                initializationError = initializationError
+                initializationError = initializationError,
+                useOnlineMode = useOnlineMode,
+                onToggleOnlineMode = { recognitionViewModel.toggleOnlineMode() }
             )
         }
     }
@@ -640,10 +668,12 @@ fun TranslationScreen(
     isScanning: Boolean = true,
     translationResult: com.example.expressora.grpc.TranslationResult? = null,
     isTranslating: Boolean = false,
-    onRemoveGloss: () -> Unit = {},
-    onConfirmTranslation: () -> Unit = {},
-    onResumeScanning: () -> Unit = {},
-    onSetIsScanning: (Boolean) -> Unit = {},
+                onRemoveGloss: () -> Unit = {},
+                onConfirmTranslation: () -> Unit = {},
+                onResumeScanning: () -> Unit = {},
+                onSetIsScanning: (Boolean) -> Unit = {},
+                useOnlineMode: Boolean = true,
+                onToggleOnlineMode: () -> Unit = {},
 ) {
     val context = LocalContext.current
     var useFrontCamera by remember { mutableStateOf(true) }
@@ -981,6 +1011,26 @@ fun TranslationScreen(
                 }
             }
 
+            // 2b. Online/Offline Mode Toggle (Top Right)
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(16.dp)
+            ) {
+                IconButton(
+                    onClick = onToggleOnlineMode,
+                    modifier = Modifier
+                        .size(48.dp)
+                        .background(Color(0xE6FFFFFF), CircleShape)
+                ) {
+                    Icon(
+                        imageVector = if (useOnlineMode) Icons.Filled.Cloud else Icons.Filled.CloudQueue,
+                        contentDescription = if (useOnlineMode) "Online Mode (Server)" else "Offline Mode (Local)",
+                        tint = if (useOnlineMode) Color(0xFF4CAF50) else Color(0xFF757575) // Green for online, Grey for offline
+                    )
+                }
+            }
+
             // 3. Translate Button (Bottom Right)
             if (glossList.isNotEmpty() && isScanning) {
                 Box(
@@ -1036,20 +1086,117 @@ fun TranslationScreen(
                     } else if (translationResult != null) {
                         Column(
                             modifier = Modifier.fillMaxWidth().padding(24.dp),
-                            verticalArrangement = Arrangement.spacedBy(12.dp)
+                            verticalArrangement = Arrangement.spacedBy(16.dp)
                         ) {
-                            Text(
-                                text = if (selectedLanguage == "English") translationResult.sentence else translationResult.sentenceFilipino,
-                                color = Color.White,
-                                fontSize = 20.sp,
-                                fontWeight = FontWeight.Bold,
-                                fontFamily = InterFontFamily
-                            )
+                            // Gloss Sequence at Top
+                            if (glossList.isNotEmpty()) {
+                                Column(
+                                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                                ) {
+                                    Text(
+                                        text = "Gloss Sequence:",
+                                        color = Color.White.copy(alpha = 0.7f),
+                                        fontSize = 14.sp,
+                                        fontFamily = InterFontFamily
+                                    )
+                                    Text(
+                                        text = glossList.joinToString(", "),
+                                        color = Color.White,
+                                        fontSize = 16.sp,
+                                        fontWeight = FontWeight.Medium,
+                                        fontFamily = InterFontFamily
+                                    )
+                                }
+                            }
+
+                            // English Section
+                            Column(
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = "English",
+                                        color = Color.White,
+                                        fontSize = 16.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        fontFamily = InterFontFamily
+                                    )
+                                    IconButton(
+                                        onClick = {
+                                            if (ttsReady) {
+                                                speakText(translationResult.sentence, "en")
+                                            }
+                                        },
+                                        enabled = ttsReady
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Filled.VolumeUp,
+                                            contentDescription = "Speak English",
+                                            tint = if (ttsReady) Color.White else Color.White.copy(alpha = 0.5f)
+                                        )
+                                    }
+                                }
+                                Text(
+                                    text = translationResult.sentence,
+                                    color = Color.White,
+                                    fontSize = 18.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    fontFamily = InterFontFamily
+                                )
+                            }
+
+                            // Filipino Section
+                            Column(
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = "Filipino",
+                                        color = Color.White,
+                                        fontSize = 16.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        fontFamily = InterFontFamily
+                                    )
+                                    IconButton(
+                                        onClick = {
+                                            if (ttsReady) {
+                                                speakText(translationResult.sentenceFilipino, "fil")
+                                            }
+                                        },
+                                        enabled = ttsReady
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Filled.VolumeUp,
+                                            contentDescription = "Speak Filipino",
+                                            tint = if (ttsReady) Color.White else Color.White.copy(alpha = 0.5f)
+                                        )
+                                    }
+                                }
+                                Text(
+                                    text = translationResult.sentenceFilipino.ifEmpty { translationResult.sentence },
+                                    color = Color.White,
+                                    fontSize = 18.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    fontFamily = InterFontFamily
+                                )
+                            }
+
+                            Spacer(modifier = Modifier.height(8.dp))
+
+                            // Done Button
                             Button(
                                 onClick = onResumeScanning,
-                                modifier = Modifier.align(Alignment.End)
+                                modifier = Modifier.fillMaxWidth()
                             ) {
-                                Text("Done")
+                                Text("Done", fontFamily = InterFontFamily)
                             }
                         }
                     }
@@ -1084,6 +1231,8 @@ fun TranslationScreenPreview() {
         isInitializing = false,
         handEngineInitialized = false,
         initializationError = null,
-        onSetIsScanning = {}
+        onSetIsScanning = {},
+        useOnlineMode = true,
+        onToggleOnlineMode = {}
     )
 }

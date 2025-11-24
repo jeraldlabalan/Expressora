@@ -106,6 +106,13 @@ android {
             isUniversalApk = true
         }
     }
+    
+    // Workaround for IncrementalSplitterRunnable issues with large assets
+    packaging {
+        jniLibs {
+            useLegacyPackaging = false
+        }
+    }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_11
         targetCompatibility = JavaVersion.VERSION_11
@@ -121,8 +128,9 @@ android {
     }
 
     androidResources {
-        // Keep TFLite assets uncompressed so Interpreter can memory-map them; our loader falls back to direct buffers if compression slips through.
-        noCompress += listOf("tflite", "lite")
+        // Keep model assets uncompressed so interpreters can memory-map them efficiently
+        // TFLite and ONNX models should not be compressed for better performance
+        noCompress += listOf("tflite", "lite", "onnx")
     }
 }
 
@@ -198,8 +206,16 @@ dependencies {
     implementation("org.tensorflow:tensorflow-lite:2.14.0")
     implementation("org.tensorflow:tensorflow-lite-gpu:2.14.0")
     implementation("org.tensorflow:tensorflow-lite-support:0.4.4")
+    // Select TF Ops for LSTM models with dynamic operations (required for Holistic LSTM)
+    implementation("org.tensorflow:tensorflow-lite-select-tf-ops:2.14.0")
     // MediaPipe Tasks Vision - explicit version for Holistic support
     implementation("com.google.mediapipe:tasks-vision:0.10.11")
+    
+    // ONNX Runtime for offline translation models
+    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.16.0")
+    
+    // Gson for JSON parsing (tokenizer.json)
+    implementation("com.google.code.gson:gson:2.10.1")
     
     // OpenCV Android SDK for computer vision tasks
     // Note: OpenCV for Android requires manual SDK integration or specific repository setup
@@ -274,13 +290,15 @@ dependencies {
 }
 
 // === Recognition artifact auto-copy (submodule -> assets) ===
-// Single unified model contract: expressora_unified.tflite (126-dim, 2-hand) + expressora_labels.json
+// NOTE: Model file is now manually managed - auto-copy disabled to prevent overwriting v2 model
+// If you want to re-enable auto-copy, update unifiedModelOut above and uncomment the copy task
 val recogTflitePath: String? by project    // optional override via -PrecogTflitePath=...
 val recogLabelsPath: String? by project    // optional override via -PrecogLabelsPath=...
 val recogLabelsNpyPath: String? by project // optional override via -PrecogLabelsNpyPath=...
 
 val assetsDir = File(project.projectDir, "src/main/assets")
-val unifiedModelOut = File(assetsDir, "expressora_unified.tflite")
+// Updated to v2 model - manually managed, not auto-copied from external/recognition
+val unifiedModelOut = File(assetsDir, "expressora_unified_v2.tflite")
 val unifiedLabelsOut = File(assetsDir, "expressora_labels.json")
 
 private val recognitionSearchDepth = 20
@@ -422,11 +440,11 @@ abstract class DownloadTask : DefaultTask() {
 
 tasks.register<DownloadTask>("downloadHandLandmarker") {
     group = "build setup"
-    description = "Ensures hand_landmarker.task is present in assets."
+    description = "Ensures hand_landmarker.task is present in assets/recognition/."
     val defaultUrl = (project.findProperty("handTaskUrl") as String?)
         ?: "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/latest/hand_landmarker.task"
     url.set(defaultUrl)
-    outFile.set(layout.projectDirectory.file("src/main/assets/hand_landmarker.task"))
+    outFile.set(layout.projectDirectory.file("src/main/assets/recognition/hand_landmarker.task"))
 }
 
 // BuildConfig fields removed - unified model contract is hardcoded in RecognitionProvider
@@ -482,110 +500,83 @@ tasks.register("diagnoseRecognitionAssets") {
     }
 }
 
-tasks.register<Exec>("generateLabelsJson") {
-    val pyScript = File(rootDir, "tools/convert_npy_to_json.py")
-    val placeholderNpy = layout.buildDirectory.file("intermediates/recognition/placeholder.labels.npy").get().asFile
-    val derivedLabelsProvider = project.provider {
-        selectedTfliteFileProvider.orNull?.let { deriveLabelsForModel(it) }
-            ?: (findLatestLabelsJsonFile(rootDir) to findLatestLabelsNpyFile(rootDir))
-    }
-    val npyFileProvider = project.provider {
-        labelsNpyOverrideProvider.orNull ?: derivedLabelsProvider.orNull?.second
-    }
+// Removed generateLabelsJson task - expressora_labels.json is now manually managed
 
-    inputs.property("recogLabelsPathOverride", recogLabelsPath ?: "")
-    inputs.property("recogLabelsNpyPathOverride", recogLabelsNpyPath ?: "")
-    inputs.property("recogTflitePathOverride", recogTflitePath ?: "")
-    inputs.file(npyFileProvider.map { it ?: placeholderNpy })
-    outputs.file(unifiedLabelsOut)
-
-    onlyIf {
-        if (recogLabelsPath != null) return@onlyIf false
-        if (unifiedLabelsOut.exists()) return@onlyIf false
-        val candidate = npyFileProvider.orNull
-        if (candidate == null) {
-            val modelName = selectedTfliteFileProvider.orNull?.name ?: "<unknown>"
-            logger.warn("No labels .npy found for unified model '$modelName'. Runtime will synthesize CLASS_i labels. Run diagnoseRecognitionAssets for details.")
-            return@onlyIf false
-        }
-        true
-    }
-
-    doFirst {
-        val npy = npyFileProvider.orNull ?: error("generateLabelsJson expected an NPY file, but none was found.")
-        assetsDir.mkdirs()
-        val pythonExec = resolvePythonExecutable()
-        logger.lifecycle("Converting NPY to unified labels JSON: ${npy.relativeToOrSelf(rootDir)} -> ${unifiedLabelsOut.relativeToOrSelf(project.projectDir)} (python=$pythonExec)")
-        environment("PYTHONUTF8", "1")
-        environment("PYTHONIOENCODING", "utf-8")
-        commandLine(pythonExec, pyScript.absolutePath, "--inp", npy.absolutePath, "--out", unifiedLabelsOut.absolutePath)
-    }
-
+// Task to explicitly delete old model file (expressora_unified.tflite) if it exists
+// This runs BEFORE build to prevent the old file from interfering
+tasks.register("cleanupOldModel") {
     doLast {
-        if (!unifiedLabelsOut.exists()) {
-            logger.warn("Unified labels JSON not created. Ensure Python+numpy are installed or provide -PrecogLabelsPath=...")
+        val oldModelFile = File(assetsDir, "expressora_unified.tflite")
+        val oldModelFp16 = File(assetsDir, "expressora_unified_fp16.tflite")
+        val oldModelInt8 = File(assetsDir, "expressora_unified_int8.tflite")
+        
+        var deleted = false
+        if (oldModelFile.exists()) {
+            oldModelFile.delete()
+            deleted = true
+            logger.lifecycle("🗑️ DELETED old model file: expressora_unified.tflite")
+        }
+        if (oldModelFp16.exists()) {
+            oldModelFp16.delete()
+            deleted = true
+            logger.lifecycle("🗑️ DELETED old model file: expressora_unified_fp16.tflite")
+        }
+        if (oldModelInt8.exists()) {
+            oldModelInt8.delete()
+            deleted = true
+            logger.lifecycle("🗑️ DELETED old model file: expressora_unified_int8.tflite")
+        }
+        
+        if (!deleted) {
+            logger.debug("✅ No old model files found, nothing to clean")
+        } else {
+            logger.warn("⚠️ Old model files were deleted - make sure they're not restored from git!")
         }
     }
 }
 
 tasks.register("copyUnifiedRecognitionArtifacts") {
-    val derivedLabelsProvider = project.provider {
-        selectedTfliteFileProvider.orNull?.let { deriveLabelsForModel(it) }
-            ?: (findLatestLabelsJsonFile(rootDir) to findLatestLabelsNpyFile(rootDir))
-    }
-
-    inputs.property("recogTflitePathOverride", recogTflitePath ?: "")
-    inputs.property("recogLabelsPathOverride", recogLabelsPath ?: "")
-    outputs.file(unifiedModelOut)
-    outputs.file(unifiedLabelsOut)
-
+    // DISABLED: Model file auto-copy is disabled - models are manually managed
+    // This prevents the build from overwriting expressora_unified_v2.tflite with old files
+    dependsOn("cleanupOldModel") // Ensure old file is deleted first
+    
     doLast {
-        assetsDir.mkdirs()
-        val tflite = selectedTfliteFileProvider.orNull
-        val (derivedJson, derivedNpy) = derivedLabelsProvider.orNull ?: (null to null)
-
-        // Copy unified model
-        if (tflite != null) {
-            tflite.copyTo(unifiedModelOut, overwrite = true)
-            logger.lifecycle("Copied unified model: ${tflite.relativeToOrSelf(rootDir)} -> ${unifiedModelOut.relativeToOrSelf(project.projectDir)}")
+        // CRITICAL: Delete old model file if it somehow reappeared
+        val oldModelFile = File(assetsDir, "expressora_unified.tflite")
+        if (oldModelFile.exists()) {
+            oldModelFile.delete()
+            logger.warn("⚠️ Found and deleted old model file: ${oldModelFile.relativeToOrSelf(project.projectDir)}")
+        }
+        
+        // NO-OP: Model files are manually managed, not auto-copied
+        logger.info("Model file auto-copy disabled - using manually managed files in assets/")
+        
+        // Just verify the v2 model file exists (won't create or overwrite)
+        if (unifiedModelOut.exists()) {
+            logger.lifecycle("✅ Model file verified: ${unifiedModelOut.relativeToOrSelf(project.projectDir)}")
         } else {
-            logger.warn("No .tflite found under external/recognition/ or via -PrecogTflitePath. App will warn at runtime.")
+            logger.warn("⚠️ Model file not found: ${unifiedModelOut.relativeToOrSelf(project.projectDir)} - please add it manually to assets")
         }
 
-        // Copy or derive unified labels
-        val existingLabels = unifiedLabelsOut.exists()
-        val labelsOverride = labelsOverrideProvider.orNull
-        val labelsSource = when {
-            existingLabels -> null
-            labelsOverride != null -> labelsOverride
-            else -> derivedJson
-        }
-
-        if (existingLabels) {
-            logger.lifecycle("Unified labels JSON already present in assets; skipping copy.")
-        } else if (labelsSource != null) {
-            labelsSource.copyTo(unifiedLabelsOut, overwrite = true)
-            logger.lifecycle("Copied unified labels: ${labelsSource.relativeToOrSelf(rootDir)} -> ${unifiedLabelsOut.relativeToOrSelf(project.projectDir)}")
-        } else {
-            val npyInfo = derivedNpy?.relativeToOrSelf(rootDir)
-            if (npyInfo != null) {
-                logger.lifecycle("No labels JSON source found; NPY candidate at $npyInfo (run generateLabelsJson to convert)")
-            } else {
-                logger.warn("No labels JSON or NPY found. Runtime will synthesize CLASS_i labels.")
-            }
-        }
+        // Labels JSON (expressora_labels.json) is now manually managed - no auto-copy
+        logger.info("Labels JSON auto-copy disabled - using manually managed files in assets/")
     }
 }
 
-tasks.named("copyUnifiedRecognitionArtifacts").configure {
-    mustRunAfter("generateLabelsJson")
-}
+// Removed dependency on generateLabelsJson task
 
 // Ensure unified asset preparation tasks run before building the app
+// CRITICAL: Run cleanupOldModel FIRST before any other tasks
 tasks.named("preBuild").configure {
+    // MUST run cleanupOldModel FIRST to prevent old model from appearing
+    dependsOn("cleanupOldModel")
     dependsOn("downloadHandLandmarker")
-    dependsOn("generateLabelsJson")
     dependsOn("copyUnifiedRecognitionArtifacts")
+}
+
+// Ensure asset tasks complete before packaging to avoid file lock issues
+tasks.matching { it.name.startsWith("package") || it.name.startsWith("bundle") }.configureEach {
+    mustRunAfter("downloadHandLandmarker", "copyUnifiedRecognitionArtifacts")
 }
 
 // === Automatic Logcat Capture ===

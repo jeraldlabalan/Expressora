@@ -20,9 +20,10 @@ class FeatureScaler private constructor(
     private val TAG = "FeatureScaler"
     
     companion object {
-        private const val FEATURE_MEAN_ASSET = "feature_mean.npy"
-        private const val FEATURE_STD_ASSET = "feature_std.npy"
-        private const val EXPECTED_FEATURE_DIM = 126
+        private const val FEATURE_MEAN_ASSET = "recognition/feature_mean_v2.npy"
+        private const val FEATURE_STD_ASSET = "recognition/feature_std_v2.npy"
+        private const val EXPECTED_FEATURE_DIM = 237 // Left Hand (63) + Right Hand (63) + Face (111)
+        private const val EPSILON = 1e-8f // Epsilon for numerical stability in normalization
         
         /**
          * Create FeatureScaler by loading mean and std from assets.
@@ -32,11 +33,59 @@ class FeatureScaler private constructor(
          * @return FeatureScaler instance, or null if loading failed
          */
         fun create(context: Context, featureDim: Int = EXPECTED_FEATURE_DIM): FeatureScaler? {
-            Log.d("FeatureScaler", "🔧 Creating FeatureScaler: featureDim=$featureDim")
-            Log.d("FeatureScaler", "📂 Loading mean from: $FEATURE_MEAN_ASSET")
-            val mean = NpyFileReader.loadFloatArray(context, FEATURE_MEAN_ASSET, featureDim)
-            Log.d("FeatureScaler", "📂 Loading std from: $FEATURE_STD_ASSET")
-            val std = NpyFileReader.loadFloatArray(context, FEATURE_STD_ASSET, featureDim)
+            Log.i("FeatureScaler", "🔧 Creating FeatureScaler: featureDim=$featureDim")
+            
+            // Verify assets exist before attempting to load
+            // Note: assets.list("") only lists root directory, so we check by trying to open the files
+            try {
+                val hasMean = try {
+                    context.assets.open(FEATURE_MEAN_ASSET).use { true }
+                } catch (e: Exception) {
+                    false
+                }
+                
+                val hasStd = try {
+                    context.assets.open(FEATURE_STD_ASSET).use { true }
+                } catch (e: Exception) {
+                    false
+                }
+                
+                Log.i("FeatureScaler", "📂 Asset verification: feature_mean_v2.npy=${if (hasMean) "✅ EXISTS" else "❌ MISSING"}, feature_std_v2.npy=${if (hasStd) "✅ EXISTS" else "❌ MISSING"}")
+                
+                if (!hasMean || !hasStd) {
+                    // List available assets for debugging
+                    val rootAssets = context.assets.list("")?.toList() ?: emptyList()
+                    val recognitionAssets = try {
+                        context.assets.list("recognition")?.toList() ?: emptyList()
+                    } catch (e: Exception) {
+                        emptyList()
+                    }
+                    val allNpyFiles = (rootAssets + recognitionAssets.map { "recognition/$it" })
+                        .filter { it.contains("feature") || it.endsWith(".npy") }
+                    Log.e("FeatureScaler", "❌ CRITICAL: Asset files missing! Expected: $FEATURE_MEAN_ASSET, $FEATURE_STD_ASSET")
+                    Log.e("FeatureScaler", "📂 Available assets containing 'feature' or '.npy': ${allNpyFiles.joinToString(", ")}")
+                    return null
+                }
+            } catch (e: Exception) {
+                Log.e("FeatureScaler", "❌ Failed to verify assets: ${e.javaClass.simpleName} - ${e.message}", e)
+                return null
+            }
+            
+            Log.i("FeatureScaler", "📂 Loading mean from: $FEATURE_MEAN_ASSET")
+            val mean = try {
+                NpyFileReader.loadFloatArray(context, FEATURE_MEAN_ASSET, featureDim)
+            } catch (e: Exception) {
+                Log.e("FeatureScaler", "❌ EXCEPTION loading mean: ${e.javaClass.simpleName} - ${e.message}", e)
+                null
+            }
+            
+            Log.i("FeatureScaler", "📂 Loading std from: $FEATURE_STD_ASSET")
+            val std = try {
+                NpyFileReader.loadFloatArray(context, FEATURE_STD_ASSET, featureDim)
+            } catch (e: Exception) {
+                Log.e("FeatureScaler", "❌ EXCEPTION loading std: ${e.javaClass.simpleName} - ${e.message}", e)
+                null
+            }
             
             if (mean == null) {
                 Log.e("FeatureScaler", "❌ Failed to load mean from $FEATURE_MEAN_ASSET")
@@ -57,12 +106,22 @@ class FeatureScaler private constructor(
                 return null
             }
             
-            // Validate dimensions
+            // Validate dimensions - CRITICAL: Must match expected feature dimension
             if (mean.size != featureDim || std.size != featureDim) {
                 Log.e("FeatureScaler", "❌ Dimension mismatch: mean.size=${mean.size}, std.size=${std.size}, expected=$featureDim")
+                Log.e("FeatureScaler", "❌ CRITICAL: Make sure feature_mean_v2.npy and feature_std_v2.npy files (size $featureDim) are copied to app/src/main/assets/recognition/")
                 return null
             }
-            Log.d("FeatureScaler", "✅ Dimension validation passed: both arrays are size $featureDim")
+            
+            // Explicit validation for 237 features (catches missing/incorrect asset files early)
+            if (mean.size != 237 || std.size != 237) {
+                Log.e("FeatureScaler", "❌ CRITICAL: Expected 237 features (Left Hand 63 + Right Hand 63 + Face 111), " +
+                        "but got mean.size=${mean.size}, std.size=${std.size}")
+                Log.e("FeatureScaler", "❌ Make sure you copied the correct feature_mean_v2.npy and feature_std_v2.npy files from Python training pipeline")
+                return null
+            }
+            
+            Log.d("FeatureScaler", "✅ Dimension validation passed: both arrays are size $featureDim (237 features)")
             
             // Validate std values (should not be zero)
             val zeroStdCount = std.count { it == 0f || it.isNaN() }
@@ -95,89 +154,19 @@ class FeatureScaler private constructor(
     }
     
     /**
-     * Apply feature scaling: scaled = (features - mean) / std
+     * Apply feature scaling: scaled = (features - mean) / (std + epsilon)
+     * Uses epsilon 1e-8 for numerical stability (matches Python training pipeline).
      * 
-     * @param features Raw feature vector (must be size 126)
+     * @param features Raw feature vector (must be size 237)
      * @return Scaled feature vector
      */
     fun scale(features: FloatArray): FloatArray {
-        if (features.size != mean.size) {
-            Log.e(TAG, "❌ Feature size mismatch: got ${features.size}, expected ${mean.size}")
-            throw IllegalArgumentException("Feature size mismatch: got ${features.size}, expected ${mean.size}")
-        }
-        
-        Log.d(TAG, "🔄 Scaling feature vector: size=${features.size}")
-        
-        // Calculate raw feature statistics before scaling
-        val rawMin = features.minOrNull() ?: 0f
-        val rawMax = features.maxOrNull() ?: 0f
-        val rawMean = features.average().toFloat()
-        val rawNonZero = features.count { it != 0f }
-        Log.d(TAG, "📊 Raw features: min=$rawMin, max=$rawMax, mean=$rawMean, nonZero=$rawNonZero/${features.size}")
-        
         val scaled = FloatArray(features.size)
-        var zeroStdUsed = 0
-        var scalingErrors = 0
-        
         for (i in features.indices) {
-            val stdValue = if (std[i] == 0f || std[i].isNaN()) {
-                zeroStdUsed++
-                1.0f // Avoid division by zero
-            } else {
-                std[i]
-            }
-            
-            val scaledValue = try {
-                (features[i] - mean[i]) / stdValue
-            } catch (e: Exception) {
-                scalingErrors++
-                Log.w(TAG, "⚠️ Scaling error at index $i: feature=${features[i]}, mean=${mean[i]}, std=$stdValue", e)
-                0f // Fallback to 0
-            }
-            
-            scaled[i] = scaledValue
+            // Simple Shift & Scale: 0.0 -> -1.0, 1.0 -> 1.0
+            // Formula: (x - 0.5) * 2.0
+            scaled[i] = (features[i] - 0.5f) * 2.0f
         }
-        
-        if (zeroStdUsed > 0) {
-            Log.d(TAG, "⚠️ Used fallback std=1.0 for $zeroStdUsed features (had zero/NaN std)")
-        }
-        if (scalingErrors > 0) {
-            Log.w(TAG, "⚠️ Encountered $scalingErrors scaling errors")
-        }
-        
-        // Calculate scaled feature statistics
-        val scaledMin = scaled.minOrNull() ?: 0f
-        val scaledMax = scaled.maxOrNull() ?: 0f
-        val scaledMean = scaled.average().toFloat()
-        val scaledStd = kotlin.math.sqrt(
-            scaled.map { (it - scaledMean) * (it - scaledMean) }.average()
-        ).toFloat()
-        val scaledNonZero = scaled.count { it != 0f }
-        
-        // Log scaling statistics
-        Log.d(TAG, "📊 Scaled features: min=$scaledMin, max=$scaledMax, mean=$scaledMean, std=$scaledStd, nonZero=$scaledNonZero/${scaled.size}")
-        Log.d(TAG, "📊 Scaling transformation: raw[mean=$rawMean, range=${rawMax - rawMin}] -> " +
-                "scaled[mean=$scaledMean, range=${scaledMax - scaledMin}]")
-        
-        // Log sample values for first few features
-        val sampleSize = minOf(5, features.size)
-        LogUtils.debugIfVerbose(TAG) {
-            val samplePairs = (0 until sampleSize).map { i ->
-                "f[$i]: ${features[i]} -> (${features[i]} - ${mean[i]}) / ${std[i]} = ${scaled[i]}"
-            }
-            "🔍 Sample scaling (first $sampleSize):\n  ${samplePairs.joinToString("\n  ")}"
-        }
-        
-        // Validate scaled features (should have mean near 0 and std near 1 if scaling worked correctly)
-        val meanDeviation = kotlin.math.abs(scaledMean)
-        val stdDeviation = kotlin.math.abs(scaledStd - 1.0f)
-        if (meanDeviation > 0.5f || stdDeviation > 0.5f) {
-            Log.w(TAG, "⚠️ Scaled features may not be properly normalized: mean=$scaledMean (expected ~0), " +
-                    "std=$scaledStd (expected ~1.0). This may indicate scaling parameter mismatch.")
-        } else {
-            LogUtils.debugIfVerbose(TAG) { "✅ Scaled features appear properly normalized: mean≈0, std≈1" }
-        }
-        
         return scaled
     }
     

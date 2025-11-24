@@ -22,6 +22,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.tensorflow.lite.Interpreter
 import org.tensorflow.lite.support.common.FileUtil
+import java.nio.ByteBuffer
 import kotlin.math.exp
 
 class TfLiteRecognitionEngine(
@@ -37,11 +38,8 @@ class TfLiteRecognitionEngine(
     private val TAG = "TfLiteRecognitionEngine"
     private val appContext = context.applicationContext
     private val labelLock = Any()
-    private val modelVariant: String = when {
-        modelAsset.contains("int8", ignoreCase = true) -> "INT8"
-        modelAsset.contains("fp16", ignoreCase = true) -> "FP16"
-        else -> "FP32"
-    }
+    // FP32 model is always used now - no other variants
+    private val modelVariant: String = "FP32"
     
     private val hasMultiHead = modelSignature?.isMultiHead() ?: false
     private val originLabels = listOf("ASL", "FSL")
@@ -344,6 +342,145 @@ class TfLiteRecognitionEngine(
     }
     
     /**
+     * Handle ByteBuffer input for LSTM sequence models (e.g., 30 frames × 237 features).
+     * Bypasses single-frame mean check and processes ByteBuffer directly.
+     * 
+     * @param inputBuffer ByteBuffer containing scaled features (30 frames × 237 features = 7110 floats)
+     */
+    suspend fun onLandmarksSequence(inputBuffer: ByteBuffer) {
+        scope.launch {
+            try {
+                RecognitionDiagnostics.recordFrame()
+                if (PerformanceConfig.VERBOSE_LOGGING) {
+                    RecognitionDiagnostics.logFPSIfNeeded()
+                }
+                
+                // Ensure labels are loaded
+                ensureLabels()
+                val tflite = obtainInterpreter()
+                
+                // Rewind buffer to ensure we read from start
+                inputBuffer.rewind()
+                
+                LogUtils.d(TAG) { "🔄 Running LSTM inference on sequence buffer: size=${inputBuffer.capacity()} bytes" }
+                
+                // Run inference with ByteBuffer directly (bypasses FloatArray conversion)
+                val result = tflite.runMultiOutputSequence(inputBuffer)
+                
+                LogUtils.debugIfVerbose(TAG) { "LSTM inference completed, processing result" }
+                
+                // Process output similar to onLandmarks but without mean check
+                val logitsStats = calculateFeatureStats(result.glossLogits)
+                
+                // Skip mean check for sequence data (already scaled in buffer)
+                
+                // Add to rolling buffer
+                val avgLogits = if (bypassRollingBuffer) {
+                    LogUtils.d(TAG) { "⚠️ BYPASSING rolling buffer - using raw logits" }
+                    result.glossLogits
+                } else {
+                    rollingBuffer.add(result.glossLogits)
+                    rollingBuffer.getAverage()
+                }
+                
+                // Apply softmax
+                val probs = softmax(avgLogits)
+                
+                // Get top prediction
+                val bestIndex = probs.indices.maxByOrNull { probs[it] } ?: 0
+                val bestConf = probs[bestIndex]
+                val rawLabel = labels.getOrElse(bestIndex) { "CLASS_$bestIndex" }
+                val mappedLabel = mappedLabels.getOrElse(bestIndex) { rawLabel }
+                
+                LogUtils.debugIfVerbose(TAG) { "LSTM prediction: label='$mappedLabel' (raw='$rawLabel'), " +
+                        "index=$bestIndex, confidence=$bestConf (${(bestConf * 100).toInt()}%)" }
+                
+                // Resolve origin
+                val originBadge = if (result.originLogits != null) {
+                    val originProbs = softmax(result.originLogits)
+                    OriginResolver.resolveFromMultiHead(originLabels, originProbs)
+                } else {
+                    OriginResolver.resolveFromPriors(rawLabel)
+                }
+                
+                // Build debug info
+                val debugInfo = com.example.expressora.recognition.model.DebugInfo(
+                    featureVectorStats = com.example.expressora.recognition.model.FeatureVectorStats(
+                        size = 7110, // 30 frames × 237 features
+                        expectedSize = 7110,
+                        nonZeroCount = 0, // Not calculated for sequence
+                        min = 0f,
+                        max = 0f,
+                        mean = 0f, // Not checked for sequence (assumed scaled)
+                        isAllZeros = false,
+                        hasNaN = false
+                    ),
+                    rawLogits = result.glossLogits.mapIndexed { idx, value -> idx to value }
+                        .sortedByDescending { it.second }
+                        .take(5)
+                        .map { (idx, value) ->
+                            com.example.expressora.recognition.model.TopPrediction(
+                                index = idx,
+                                label = labels.getOrElse(idx) { "CLASS_$idx" },
+                                value = value
+                            )
+                        },
+                    softmaxProbs = probs.mapIndexed { idx, value -> idx to value }
+                        .sortedByDescending { it.second }
+                        .take(5)
+                        .map { (idx, value) ->
+                            com.example.expressora.recognition.model.TopPrediction(
+                                index = idx,
+                                label = labels.getOrElse(idx) { "CLASS_$idx" },
+                                value = value
+                            )
+                        },
+                    averagedLogits = avgLogits.mapIndexed { idx, value -> idx to value }
+                        .sortedByDescending { it.second }
+                        .take(5)
+                        .map { (idx, value) ->
+                            com.example.expressora.recognition.model.TopPrediction(
+                                index = idx,
+                                label = labels.getOrElse(idx) { "CLASS_$idx" },
+                                value = value
+                            )
+                        }
+                )
+                
+                // Emit detailed result
+                val recognitionResult = RecognitionResult(
+                    glossLabel = mappedLabel,
+                    glossConf = bestConf,
+                    glossIndex = bestIndex,
+                    originLabel = originBadge.origin,
+                    originConf = originBadge.confidence,
+                    timestamp = System.currentTimeMillis(),
+                    debugInfo = debugInfo
+                )
+                
+                LogUtils.d(TAG) { "✅ Emitting LSTM recognition result: label='$mappedLabel', conf=$bestConf (${(bestConf * 100).toInt()}%), origin='${originBadge.origin}'" }
+                
+                // Cache stable results
+                if (PerformanceConfig.ENABLE_RESULT_CACHING && bestConf >= 0.8f) {
+                    cachedResult = recognitionResult
+                    cacheTimestamp = SystemClock.elapsedRealtime()
+                }
+                
+                // Emit results
+                _results.emit(recognitionResult)
+                _events.emit(GlossEvent.InProgress(listOf(mappedLabel)))
+                
+            } catch (t: Throwable) {
+                Log.e(TAG, "❌ LSTM recognition error", t)
+                Log.e(TAG, "❌ Error type: ${t.javaClass.simpleName}, message: ${t.message}")
+                Log.e(TAG, "❌ Buffer size: ${inputBuffer.capacity()} bytes, position: ${inputBuffer.position()}, limit: ${inputBuffer.limit()}")
+                t.printStackTrace()
+                _events.emit(GlossEvent.Error("LSTM recognition failure: ${t.message ?: t.javaClass.simpleName}"))
+            }
+        }
+    }
+    
+    /**
      * Calculate statistics for a feature vector or logits array
      */
     private data class FeatureStats(
@@ -492,7 +629,14 @@ class TfLiteRecognitionEngine(
     }
 
     private fun createInterpreter(numClasses: Int): TfLiteInterpreter {
-        Log.i(TAG, "Creating TFLite interpreter: featureDim=$featureDim, numClasses=$numClasses")
+        // CRITICAL: Verify model name - should ALWAYS be FP32 now
+        Log.i(TAG, "🔍 Creating TFLite interpreter with model: '$modelAsset'")
+        if (!modelAsset.contains("expressora_unified_v3.tflite")) {
+            Log.e(TAG, "❌ CRITICAL ERROR: Wrong model selected! Expected 'expressora_unified_v3.tflite' (FP32), got: '$modelAsset'")
+        } else {
+            Log.i(TAG, "✅ Model verified: FP32 model '$modelAsset' (Float32 inputs = 28440 bytes)")
+        }
+        Log.i(TAG, "Creating TFLite interpreter: featureDim=$featureDim, numClasses=$numClasses, modelVariant=$modelVariant")
         return TfLiteInterpreter(
             appContext, 
             modelAsset, 

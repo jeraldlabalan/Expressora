@@ -25,7 +25,7 @@ class MediaPipePalmRoiDetector(
     
     companion object {
         private const val TAG = "MediaPipePalmRoiDetector"
-        private const val MODEL_ASSET_PATH = "hand_landmarker.task"
+        private const val MODEL_ASSET_PATH = "recognition/hand_landmarker.task"
     }
 
     private var landmarker: HandLandmarker? = null

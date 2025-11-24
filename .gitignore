@@ -87,3 +87,8 @@ Thumbs.db
 
 docker-compose.override.yml
 __pycache__/
+
+# Old model files - use expressora_unified_v2.tflite instead
+app/src/main/assets/expressora_unified.tflite
+app/src/main/assets/expressora_unified_fp16.tflite
+app/src/main/assets/expressora_unified_int8.tflite

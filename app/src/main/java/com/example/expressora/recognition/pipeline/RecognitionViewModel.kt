@@ -22,6 +22,7 @@ import com.example.expressora.recognition.model.FeatureVectorStats
 import com.example.expressora.recognition.persistence.SequenceHistoryRepository
 import com.example.expressora.recognition.tflite.TfLiteRecognitionEngine
 import com.example.expressora.recognition.feature.LandmarkFeatureExtractor
+import com.example.expressora.recognition.feature.FeatureScaler
 import com.example.expressora.recognition.feature.MotionVarianceDetector
 import com.google.mediapipe.tasks.vision.holisticlandmarker.HolisticLandmarkerResult
 import kotlinx.coroutines.flow.*
@@ -34,12 +35,15 @@ import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.TimeoutCancellationException
+import com.example.expressora.translation.OfflineTranslationEngine
 
 class RecognitionViewModel(
     private val engine: RecognitionEngine? = null, // Optional for offline mode (Tweak 3)
     private val streamer: LandmarkStreamer? = null, // Optional for online mode
     private val context: Context,
-    private val useOnlineMode: Boolean = true // Tweak 3: Hybrid Intelligence - toggle between modes
+    initialUseOnlineMode: Boolean = true // Tweak 3: Hybrid Intelligence - toggle between modes
 ) : ViewModel() {
     private val TAG = "RecognitionViewModel"
     private val _state = MutableStateFlow<GlossEvent>(GlossEvent.Idle)
@@ -86,6 +90,47 @@ class RecognitionViewModel(
     private val _isTranslating = MutableStateFlow<Boolean>(false)
     val isTranslating: StateFlow<Boolean> = _isTranslating.asStateFlow()
     
+    // Online/Offline mode toggle (runtime switching)
+    private val _useOnlineMode = MutableStateFlow(initialUseOnlineMode)
+    val useOnlineMode: StateFlow<Boolean> = _useOnlineMode.asStateFlow()
+    
+    // Offline translation engine (initialized on background thread)
+    private var offlineTranslator: OfflineTranslationEngine? = null
+    
+    /**
+     * Toggle between Online Mode (Server/gRPC) and Offline Mode (Local TFLite).
+     * Handles connection/disconnection when switching modes.
+     */
+    fun toggleOnlineMode() {
+        val newMode = !_useOnlineMode.value
+        _useOnlineMode.value = newMode
+        
+        viewModelScope.launch {
+            if (newMode) {
+                // Switching to Online Mode: Connect streamer if available
+                if (streamer != null) {
+                    LogUtils.d(TAG) { "🔄 Switching to Online Mode: Connecting streamer" }
+                    streamer.connect()
+                }
+            } else {
+                // Switching to Offline Mode: Disconnect streamer and ensure engine is ready
+                if (streamer != null && streamer.isConnected()) {
+                    LogUtils.d(TAG) { "🔄 Switching to Offline Mode: Disconnecting streamer" }
+                    streamer.stopStreaming()
+                }
+                // Ensure engine is started if switching to offline mode
+                if (engine != null) {
+                    try {
+                        engine.start()
+                        LogUtils.d(TAG) { "✅ Offline Mode: Engine started" }
+                    } catch (e: Exception) {
+                        LogUtils.w(TAG) { "⚠️ Failed to start engine: ${e.message}" }
+                    }
+                }
+            }
+        }
+    }
+    
     // Trigger Discipline: Time-based restrictions to prevent spam detection
     private var lastDetectedGloss: String? = null
     private var lastDetectionTime: Long = 0L
@@ -104,6 +149,9 @@ class RecognitionViewModel(
     
     // Variance detector for pre-filtering noise before sending to server (optional bandwidth optimization)
     private val varianceDetector = MotionVarianceDetector(bufferSize = 10, varianceThreshold = 0.01f)
+    
+    // Feature extractor for LSTM model (with 30-frame buffer)
+    private val featureExtractor: LandmarkFeatureExtractor
     
     // History repository
     private val historyRepository = SequenceHistoryRepository(context)
@@ -125,7 +173,81 @@ class RecognitionViewModel(
     private val STUCK_DETECTION_FRAME_THRESHOLD = 30 // 30 frames at ~10fps
 
     init {
-        LogUtils.d(TAG) { "Initializing RecognitionViewModel (useOnlineMode=$useOnlineMode)" }
+        LogUtils.d(TAG) { "Initializing RecognitionViewModel (initialUseOnlineMode=$initialUseOnlineMode)" }
+        
+        // Initialize feature extractor with FeatureScaler for LSTM model
+        Log.i(TAG, "🔧 Initializing FeatureScaler...")
+        Log.i(TAG, "📂 Context: ${context.javaClass.simpleName}, assets available: ${try { context.assets.list("") != null } catch (e: Exception) { false }}")
+        
+        val featureScaler = try {
+            FeatureScaler.create(context, featureDim = 237)
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ EXCEPTION during FeatureScaler.create(): ${e.javaClass.simpleName} - ${e.message}", e)
+            null
+        }
+        
+        if (featureScaler == null) {
+            Log.e(TAG, "❌ CRITICAL: Failed to initialize FeatureScaler! LSTM model requires feature scaling.")
+            Log.e(TAG, "❌ Make sure feature_mean_v2.npy and feature_std_v2.npy (size 237) are in app/src/main/assets/recognition/")
+            
+            // Try to list assets to help debug
+            try {
+                val rootAssets = context.assets.list("")?.toList() ?: emptyList()
+                val recognitionAssets = try {
+                    context.assets.list("recognition")?.toList() ?: emptyList()
+                } catch (e: Exception) {
+                    emptyList()
+                }
+                val allNpyFiles = (rootAssets + recognitionAssets.map { "recognition/$it" })
+                    .filter { it.contains("feature") || it.endsWith(".npy") }
+                Log.e(TAG, "📂 Available assets containing 'feature' or '.npy': ${allNpyFiles.joinToString(", ")}")
+                
+                // Check if files exist by trying to open them
+                val hasMean = try {
+                    context.assets.open("recognition/feature_mean_v2.npy").use { true }
+                } catch (e: Exception) {
+                    false
+                }
+                val hasStd = try {
+                    context.assets.open("recognition/feature_std_v2.npy").use { true }
+                } catch (e: Exception) {
+                    false
+                }
+                Log.e(TAG, "📂 Asset check: recognition/feature_mean_v2.npy=${if (hasMean) "✅" else "❌"}, recognition/feature_std_v2.npy=${if (hasStd) "✅" else "❌"}")
+            } catch (e: Exception) {
+                Log.e(TAG, "❌ Failed to list assets: ${e.message}", e)
+            }
+        } else {
+            Log.i(TAG, "✅ FeatureScaler initialized successfully!")
+            Log.i(TAG, "✅ FeatureExtractor initialized with FeatureScaler (237 features)")
+        }
+        
+        featureExtractor = LandmarkFeatureExtractor(featureScaler)
+        
+        // Initialize offline translation engine on background thread
+        viewModelScope.launch(Dispatchers.IO) {
+            val initStartTime = System.currentTimeMillis()
+            Log.i(TAG, "🔧 [OFFLINE_INIT] ========================================")
+            Log.i(TAG, "🔧 [OFFLINE_INIT] Starting offline translation engine initialization...")
+            Log.d(TAG, "🔧 [OFFLINE_INIT] Thread: ${Thread.currentThread().name}")
+            Log.d(TAG, "🔧 [OFFLINE_INIT] Dispatcher: IO")
+            try {
+                offlineTranslator = OfflineTranslationEngine(context)
+                val initDuration = System.currentTimeMillis() - initStartTime
+                Log.i(TAG, "✅ [OFFLINE_INIT] Offline translation engine initialized successfully in ${initDuration}ms")
+                Log.d(TAG, "✅ [OFFLINE_INIT] Engine instance: ${offlineTranslator != null}")
+            } catch (e: Exception) {
+                val initDuration = System.currentTimeMillis() - initStartTime
+                Log.e(TAG, "❌ [OFFLINE_INIT] Failed to initialize offline translation engine after ${initDuration}ms", e)
+                Log.e(TAG, "❌ [OFFLINE_INIT] Exception type: ${e.javaClass.simpleName}")
+                Log.e(TAG, "❌ [OFFLINE_INIT] Exception message: ${e.message}")
+                e.printStackTrace()
+                // Continue without offline fallback - online translation will still work
+                offlineTranslator = null
+                Log.w(TAG, "⚠️ [OFFLINE_INIT] Continuing without offline fallback - online translation will still work")
+            }
+            Log.i(TAG, "🔧 [OFFLINE_INIT] ========================================")
+        }
         
         // CRITICAL: Observe accumulator state and sync to UI in real-time
         // Accumulator is the SINGLE SOURCE OF TRUTH - all modifications must go through it
@@ -141,7 +263,7 @@ class RecognitionViewModel(
             }
         }
         
-        if (useOnlineMode && streamer != null) {
+        if (initialUseOnlineMode && streamer != null) {
             // Online mode: Use gRPC streaming
             LogUtils.d(TAG) { "Using ONLINE mode with gRPC streaming" }
             viewModelScope.launch {
@@ -254,7 +376,7 @@ class RecognitionViewModel(
                 
                 LogUtils.d(TAG) { "Publishing sequence: tokens=${tokens.size}, origin=$origin, confidence=$confidence" }
                 
-                // TODO: Gather non-manual annotations from FaceLandmarkerEngine when integrated
+                // TODO: Gather non-manual annotations (face expressions, etc.) from HolisticLandmarkerEngine when needed
                 val nonmanuals = emptyList<com.example.expressora.recognition.bus.NonManualAnnotation>()
                 
                 // Publish to bus with full contract payload
@@ -419,7 +541,8 @@ class RecognitionViewModel(
                 return@launch // Skip processing while translation result is showing
             }
             
-            if (useOnlineMode && streamer != null) {
+            // Dynamic mode check: use StateFlow value instead of constructor parameter
+            if (_useOnlineMode.value && streamer != null) {
             // Additional safety check: verify connection is ready before sending
             val isConnected = streamer.isConnected()
             if (!isConnected) {
@@ -459,36 +582,24 @@ class RecognitionViewModel(
             // Process on background thread to avoid blocking
             withContext(Dispatchers.Default) {
                 try {
-                    // Extract hand landmarks from HolisticLandmarkerResult
-                    val leftHandLandmarks = result.leftHandLandmarks()
-                    val rightHandLandmarks = result.rightHandLandmarks()
+                    // Use new Holistic LSTM feature extractor (30-frame buffer, 237 features per frame)
+                    val byteBuffer = featureExtractor.process(result, timestampMs)
                     
-                    val hasLeftHand = leftHandLandmarks != null && leftHandLandmarks.isNotEmpty()
-                    val hasRightHand = rightHandLandmarks != null && rightHandLandmarks.isNotEmpty()
-                    
-                    if (!hasLeftHand && !hasRightHand) {
-                        LogUtils.v(TAG) { "⏸️ No hands detected in offline mode, skipping" }
+                    if (byteBuffer == null) {
+                        // Buffer not full yet - wait for more frames
+                        LogUtils.v(TAG) { "⏸️ Waiting for buffer: ${featureExtractor.getBufferSize()}/30 frames" }
                         return@withContext
                     }
                     
-                    // Convert NormalizedLandmark to Point3
-                    val leftPoints = leftHandLandmarks?.map { landmark ->
-                        LandmarkFeatureExtractor.Point3(landmark.x(), landmark.y(), landmark.z())
+                    // Buffer is full - pass ByteBuffer directly to engine for LSTM inference
+                    if (engine is TfLiteRecognitionEngine) {
+                        // Pass ByteBuffer directly to engine (contains scaled 30-frame sequence)
+                        // No conversion needed - engine handles ByteBuffer directly
+                        engine.onLandmarksSequence(byteBuffer)
+                        LogUtils.v(TAG) { "✅ Offline recognition: processing ByteBuffer with 30 frames × 237 features (7110 floats) directly" }
+                    } else {
+                        Log.w(TAG, "⚠️ Engine is not TfLiteRecognitionEngine, cannot process ByteBuffer")
                     }
-                    val rightPoints = rightHandLandmarks?.map { landmark ->
-                        LandmarkFeatureExtractor.Point3(landmark.x(), landmark.y(), landmark.z())
-                    }
-                    
-                    // Create Hands object and convert to feature vector
-                    // Always use two-hand format (126 dims) - missing hands are zero-padded by extractor
-                    // The twoHands parameter is deprecated but kept for API compatibility
-                    val hands = HandToFeaturesBridge.Hands(left = leftPoints, right = rightPoints)
-                    val featureVector = HandToFeaturesBridge.toVec(hands, twoHands = true)
-                    
-                    // Pass feature vector to engine for classification
-                    engine.onLandmarks(featureVector)
-                    
-                    LogUtils.v(TAG) { "✅ Offline recognition: processed ${featureVector.size}D features (left=${hasLeftHand}, right=${hasRightHand})" }
                 } catch (e: Exception) {
                     Log.e(TAG, "❌ Error processing landmarks in offline mode", e)
                 }
@@ -502,7 +613,8 @@ class RecognitionViewModel(
     }
     
     /**
-     * Handle feature vector from HandToFeaturesBridge (Offline mode - Tweak 3)
+     * Handle feature vector (Legacy method - Offline mode)
+     * Note: Main offline processing now uses LandmarkFeatureExtractor.process() in onLandmarks()
      */
     fun onFeatures(vec: FloatArray) = viewModelScope.launch {
         if (engine == null) {
@@ -664,85 +776,237 @@ class RecognitionViewModel(
      * Confirm translation: pause camera, disconnect stream, call TranslateSequence, show result.
      */
     fun confirmTranslation() {
+        val confirmStartTime = System.currentTimeMillis()
+        Log.i(TAG, "🔄 [CONFIRM_TRANSLATE] ========================================")
+        Log.i(TAG, "🔄 [CONFIRM_TRANSLATE] confirmTranslation() called")
+        
         // Stack trace logging to identify callers
         val stackTrace = Thread.currentThread().stackTrace.take(5).joinToString("\n") { 
             "  at ${it.className}.${it.methodName}(${it.fileName}:${it.lineNumber})"
         }
-        Log.i(TAG, "🔄 confirmTranslation() called from:\n$stackTrace")
+        Log.d(TAG, "📞 [CONFIRM_TRANSLATE] Call stack:\n$stackTrace")
+        Log.d(TAG, "📞 [CONFIRM_TRANSLATE] Thread: ${Thread.currentThread().name}")
         
         // Guard check to prevent translation if already translating
-        if (_isTranslating.value) {
-            Log.w(TAG, "⚠️ confirmTranslation() called while already translating - ignoring")
-            return
-        }
-        
-        if (!useOnlineMode || streamer == null) {
-            Log.w(TAG, "❌ Cannot translate: not in online mode or streamer not available (useOnlineMode=$useOnlineMode, streamer=${if (streamer == null) "null" else "not null"})")
+        val isCurrentlyTranslating = _isTranslating.value
+        Log.d(TAG, "🔍 [CONFIRM_TRANSLATE] Current state check: isTranslating=$isCurrentlyTranslating")
+        if (isCurrentlyTranslating) {
+            Log.w(TAG, "⚠️ [CONFIRM_TRANSLATE] Already translating - ignoring duplicate call")
             return
         }
         
         val glosses = _glossList.value
+        Log.d(TAG, "📋 [CONFIRM_TRANSLATE] Current gloss list: ${glosses.size} items")
         if (glosses.isEmpty()) {
-            Log.w(TAG, "❌ Cannot translate: gloss list is empty")
+            Log.w(TAG, "❌ [CONFIRM_TRANSLATE] Cannot translate: gloss list is empty")
             return
         }
         
-        Log.i(TAG, "✅ Starting translation process: ${glosses.size} glosses, current tone=${_currentTone.value}")
-        Log.i(TAG, "📋 Gloss list: ${glosses.joinToString(", ")}")
+        val tone = _currentTone.value
+        val origin = _recognitionResult.value?.originLabel
+        Log.i(TAG, "✅ [CONFIRM_TRANSLATE] Starting translation process")
+        Log.d(TAG, "📊 [CONFIRM_TRANSLATE] Input details:")
+        Log.d(TAG, "   - Gloss count: ${glosses.size}")
+        Log.d(TAG, "   - Glosses: ${glosses.joinToString(", ")}")
+        Log.d(TAG, "   - Tone: $tone")
+        Log.d(TAG, "   - Origin: $origin")
+        Log.d(TAG, "   - Online mode: ${_useOnlineMode.value}")
+        Log.d(TAG, "   - Streamer available: ${streamer != null}")
+        Log.d(TAG, "   - Offline translator available: ${offlineTranslator != null}")
         
         // Set loading state IMMEDIATELY (synchronously) before launching coroutine
         // This ensures UI shows ModalBottomSheet instantly with loading state
-        Log.i(TAG, "⏳ Step 1/5: Setting isTranslating = true (SYNCHRONOUSLY)")
+        Log.d(TAG, "⏳ [CONFIRM_TRANSLATE] Step 1/5: Setting isTranslating = true (SYNCHRONOUSLY)")
         _isTranslating.value = true
-        Log.i(TAG, "✅ isTranslating state updated: ${_isTranslating.value}")
+        Log.d(TAG, "✅ [CONFIRM_TRANSLATE] isTranslating state updated: ${_isTranslating.value}")
         
         // Pause camera scanning IMMEDIATELY
-        Log.i(TAG, "⏸️ Step 2/5: Pausing camera scanning (isScanning = false) (SYNCHRONOUSLY)")
+        Log.d(TAG, "⏸️ [CONFIRM_TRANSLATE] Step 2/5: Pausing camera scanning (isScanning = false) (SYNCHRONOUSLY)")
         _isScanning.value = false
-        Log.i(TAG, "✅ isScanning state updated: ${_isScanning.value}")
+        Log.d(TAG, "✅ [CONFIRM_TRANSLATE] isScanning state updated: ${_isScanning.value}")
         
         viewModelScope.launch {
+            val translationStartTime = System.currentTimeMillis()
+            Log.d(TAG, "🚀 [TRANSLATE] Launching translation coroutine...")
+            Log.d(TAG, "📞 [TRANSLATE] Coroutine thread: ${Thread.currentThread().name}")
+            
             try {
-                // Stop gRPC stream to prevent interference with TranslateSequence (keep channel for blocking call)
-                Log.i(TAG, "🛑 Step 3/5: Stopping gRPC stream before translation")
-                streamer?.stopStreaming()
-                Log.i(TAG, "✅ gRPC stream stopped (channel kept alive for blocking call)")
+                // STRATEGY: Try Online first, Fallback to Offline
+                val useOnline = _useOnlineMode.value && streamer != null
+                Log.d(TAG, "🔀 [TRANSLATE] Strategy decision:")
+                Log.d(TAG, "   - Online mode enabled: ${_useOnlineMode.value}")
+                Log.d(TAG, "   - Streamer available: ${streamer != null}")
+                Log.d(TAG, "   - Will try online: $useOnline")
                 
-                val tone = _currentTone.value
-                // Get origin from last recognition result (for code-switching support)
-                val origin = _recognitionResult.value?.originLabel
-                Log.i(TAG, "📞 Step 4/5: Calling TranslateSequence: ${glosses.size} glosses, tone=$tone, origin=$origin")
+                if (useOnline) {
+                    val onlineStartTime = System.currentTimeMillis()
+                    Log.i(TAG, "☁️ [TRANSLATE] ========================================")
+                    Log.i(TAG, "☁️ [TRANSLATE] Attempting ONLINE (Cloud) Translation...")
+                    try {
+                        // Stop gRPC stream to prevent interference with TranslateSequence (keep channel for blocking call)
+                        val stopStreamStartTime = System.currentTimeMillis()
+                        Log.d(TAG, "🛑 [TRANSLATE] Step 3/5: Stopping gRPC stream before translation...")
+                        streamer?.stopStreaming()
+                        val stopStreamDuration = System.currentTimeMillis() - stopStreamStartTime
+                        Log.d(TAG, "✅ [TRANSLATE] gRPC stream stopped in ${stopStreamDuration}ms (channel kept alive for blocking call)")
+                        
+                        Log.d(TAG, "📞 [TRANSLATE] Calling TranslateSequence RPC...")
+                        Log.d(TAG, "📊 [TRANSLATE] Request parameters:")
+                        Log.d(TAG, "   - Glosses: ${glosses.joinToString(", ")}")
+                        Log.d(TAG, "   - Tone: $tone")
+                        Log.d(TAG, "   - Origin: $origin")
+                        
+                        // Try Cloud translation with 5s timeout
+                        val cloudStartTime = System.currentTimeMillis()
+                        Log.d(TAG, "⏱️ [TRANSLATE] Starting cloud translation with 5s timeout...")
+                        val result = withTimeout(5000L) {
+                            streamer!!.translateSequence(glosses, tone, origin)
+                        }
+                        val cloudDuration = System.currentTimeMillis() - cloudStartTime
+                        Log.i(TAG, "⏱️ [TRANSLATE] Cloud translation completed in ${cloudDuration}ms")
+                        
+                        // Update translation result
+                        Log.d(TAG, "💾 [TRANSLATE] Updating translation result from Cloud...")
+                        Log.d(TAG, "📊 [TRANSLATE] Cloud result:")
+                        Log.d(TAG, "   - Sentence: '${result.sentence}'")
+                        Log.d(TAG, "   - Sentence Filipino: '${result.sentenceFilipino}'")
+                        Log.d(TAG, "   - Source: '${result.source}'")
+                        Log.d(TAG, "   - Tone: '${result.tone}'")
+                        
+                        _translationResult.value = result
+                        val onlineDuration = System.currentTimeMillis() - onlineStartTime
+                        Log.i(TAG, "✅ [TRANSLATE] Translation result state updated")
+                        Log.i(TAG, "🎉 [TRANSLATE] Cloud translation completed successfully in ${onlineDuration}ms")
+                        Log.i(TAG, "☁️ [TRANSLATE] ========================================")
+                        
+                        val totalDuration = System.currentTimeMillis() - translationStartTime
+                        Log.i(TAG, "🔄 [CONFIRM_TRANSLATE] Total translation time: ${totalDuration}ms")
+                        Log.i(TAG, "🔄 [CONFIRM_TRANSLATE] ========================================")
+                        
+                        // Success - return early
+                        return@launch
+                    } catch (e: TimeoutCancellationException) {
+                        val onlineDuration = System.currentTimeMillis() - onlineStartTime
+                        Log.w(TAG, "⚠️ [TRANSLATE] Cloud translation timed out after ${onlineDuration}ms (5s limit)")
+                        Log.w(TAG, "⚠️ [TRANSLATE] Falling back to Offline translation...")
+                    } catch (e: Exception) {
+                        val onlineDuration = System.currentTimeMillis() - onlineStartTime
+                        Log.w(TAG, "⚠️ [TRANSLATE] Cloud translation failed after ${onlineDuration}ms: ${e.message}", e)
+                        Log.w(TAG, "⚠️ [TRANSLATE] Exception type: ${e.javaClass.simpleName}")
+                        Log.w(TAG, "⚠️ [TRANSLATE] Falling back to Offline translation...")
+                        e.printStackTrace()
+                        // Fall through to Offline logic below...
+                    }
+                } else {
+                    Log.d(TAG, "⏭️ [TRANSLATE] Skipping online translation (not in online mode or streamer unavailable)")
+                }
                 
-                // Call translation service with origin for code-switching support
-                val startTime = System.currentTimeMillis()
-                val result = streamer.translateSequence(glosses, tone, origin)
-                val duration = System.currentTimeMillis() - startTime
+                // OFFLINE FALLBACK (Runs if Online failed OR if mode is Offline)
+                val offlineStartTime = System.currentTimeMillis()
+                Log.i(TAG, "📱 [TRANSLATE] ========================================")
+                Log.i(TAG, "📱 [TRANSLATE] Running OFFLINE Translation...")
                 
-                Log.i(TAG, "⏱️ TranslateSequence completed in ${duration}ms")
+                val offlineEngine = offlineTranslator
+                Log.d(TAG, "🔍 [TRANSLATE] Checking offline translator availability...")
+                Log.d(TAG, "📊 [TRANSLATE] Offline translator: ${if (offlineEngine != null) "available" else "null"}")
                 
-                // Update translation result
-                Log.i(TAG, "💾 Step 5/5: Updating translation result")
+                if (offlineEngine == null) {
+                    val offlineDuration = System.currentTimeMillis() - offlineStartTime
+                    Log.e(TAG, "❌ [TRANSLATE] Offline translator not initialized after ${offlineDuration}ms - cannot translate")
+                    val errorResult = TranslationResult.newBuilder()
+                        .setSentence("Translation unavailable: Offline engine not ready")
+                        .setSource("Error")
+                        .build()
+                    _translationResult.value = errorResult
+                    Log.e(TAG, "💾 [TRANSLATE] Error result set in translationResult state")
+                    return@launch
+                }
+                
+                // Determine target language from tone or default to English
+                val targetLang = if (tone.contains("filipino", ignoreCase = true) || 
+                                    tone.contains("fil", ignoreCase = true)) {
+                    "fil"
+                } else {
+                    "en"
+                }
+                Log.d(TAG, "🌐 [TRANSLATE] Target language determined: $targetLang")
+                Log.d(TAG, "📊 [TRANSLATE] Language decision based on tone: '$tone'")
+                
+                Log.d(TAG, "🔄 [TRANSLATE] Switching to Default dispatcher for offline translation...")
+                val offlineTranslateStartTime = System.currentTimeMillis()
+                val offlineResult = withContext(Dispatchers.Default) {
+                    Log.d(TAG, "📱 [TRANSLATE] Running offline translation on thread: ${Thread.currentThread().name}")
+                    offlineEngine.translate(glosses, targetLang)
+                }
+                val offlineTranslateDuration = System.currentTimeMillis() - offlineTranslateStartTime
+                Log.i(TAG, "✅ [TRANSLATE] Offline translation complete in ${offlineTranslateDuration}ms")
+                Log.d(TAG, "📝 [TRANSLATE] Offline translation result: '$offlineResult'")
+                
+                // Create TranslationResult with offline source
+                val resultBuildStartTime = System.currentTimeMillis()
+                Log.d(TAG, "🔨 [TRANSLATE] Building TranslationResult...")
+                val resultBuilder = TranslationResult.newBuilder()
+                    .setSource("Offline (Tiny T5)")
+                
+                // Set the appropriate sentence field based on target language
+                if (targetLang == "fil") {
+                    Log.d(TAG, "🌐 [TRANSLATE] Setting Filipino sentence field...")
+                    resultBuilder.setSentenceFilipino(offlineResult)
+                    resultBuilder.setSentence("")
+                    Log.d(TAG, "✅ [TRANSLATE] Filipino sentence set: '$offlineResult'")
+                } else {
+                    Log.d(TAG, "🌐 [TRANSLATE] Setting English sentence field...")
+                    resultBuilder.setSentence(offlineResult)
+                    resultBuilder.setSentenceFilipino("")
+                    Log.d(TAG, "✅ [TRANSLATE] English sentence set: '$offlineResult'")
+                }
+                
+                val result = resultBuilder.build()
+                val resultBuildDuration = System.currentTimeMillis() - resultBuildStartTime
+                Log.d(TAG, "✅ [TRANSLATE] TranslationResult built in ${resultBuildDuration}ms")
+                
+                Log.d(TAG, "📊 [TRANSLATE] Final result:")
+                Log.d(TAG, "   - Sentence: '${result.sentence}'")
+                Log.d(TAG, "   - Sentence Filipino: '${result.sentenceFilipino}'")
+                Log.d(TAG, "   - Source: '${result.source}'")
+                Log.d(TAG, "   - Tone: '${result.tone}'")
+                
                 _translationResult.value = result
-                Log.i(TAG, "✅ Translation result state updated: sentence='${result.sentence}', source='${result.source}'")
+                val offlineDuration = System.currentTimeMillis() - offlineStartTime
+                Log.i(TAG, "💾 [TRANSLATE] Offline translation result set in state")
+                Log.i(TAG, "📱 [TRANSLATE] ========================================")
                 
-                Log.i(TAG, "🎉 Translation process completed successfully: '${result.sentence}' (source: ${result.source})")
+                val totalDuration = System.currentTimeMillis() - translationStartTime
+                Log.i(TAG, "🔄 [CONFIRM_TRANSLATE] Total translation time: ${totalDuration}ms")
+                Log.i(TAG, "🔄 [CONFIRM_TRANSLATE] ========================================")
+                
             } catch (e: Exception) {
-                Log.e(TAG, "❌ Translation failed with exception: ${e.message}", e)
-                Log.e(TAG, "📊 Exception type: ${e.javaClass.simpleName}")
+                val totalDuration = System.currentTimeMillis() - translationStartTime
+                Log.e(TAG, "❌ [TRANSLATE] Translation failed with exception after ${totalDuration}ms", e)
+                Log.e(TAG, "❌ [TRANSLATE] Exception type: ${e.javaClass.simpleName}")
+                Log.e(TAG, "❌ [TRANSLATE] Exception message: ${e.message}")
                 e.printStackTrace()
                 
                 // Show error result
+                Log.d(TAG, "🔨 [TRANSLATE] Building error TranslationResult...")
                 val errorResult = TranslationResult.newBuilder()
                     .setSentence("Translation error: ${e.message}")
-                    .setSource("Offline (Local)")
+                    .setSource("Error")
                     .build()
                 _translationResult.value = errorResult
-                Log.i(TAG, "💾 Error result set in translationResult state")
+                Log.e(TAG, "💾 [TRANSLATE] Error result set in translationResult state")
+                Log.e(TAG, "📊 [TRANSLATE] Error result: sentence='${errorResult.sentence}', source='${errorResult.source}'")
             } finally {
                 // Always reset loading state
-                Log.i(TAG, "🔄 Finally block: Resetting isTranslating = false")
+                val finallyStartTime = System.currentTimeMillis()
+                Log.d(TAG, "🔄 [TRANSLATE] Finally block: Cleaning up...")
                 _isTranslating.value = false
-                Log.i(TAG, "✅ isTranslating state reset: ${_isTranslating.value}")
+                Log.d(TAG, "✅ [TRANSLATE] isTranslating state reset: ${_isTranslating.value}")
+                
+                val totalDuration = System.currentTimeMillis() - confirmStartTime
+                val finallyDuration = System.currentTimeMillis() - finallyStartTime
+                Log.d(TAG, "✅ [TRANSLATE] Finally block complete in ${finallyDuration}ms")
+                Log.i(TAG, "🔄 [CONFIRM_TRANSLATE] Total confirmTranslation() time: ${totalDuration}ms")
             }
         }
     }
@@ -770,7 +1034,7 @@ class RecognitionViewModel(
         Log.i(TAG, "✅ Tone reset: ${_currentTone.value}")
         
         // Reconnect gRPC stream FIRST, then resume scanning (prevents race condition)
-        if (useOnlineMode && streamer != null) {
+        if (_useOnlineMode.value && streamer != null) {
             Log.i(TAG, "🔌 Step 4/5: Reconnecting gRPC stream before resuming scanning")
             viewModelScope.launch {
                 try {
@@ -809,7 +1073,7 @@ class RecognitionViewModel(
             Log.i(TAG, "▶️ Step 4/4: Resuming camera scanning (offline mode, isScanning = true)")
             _isScanning.value = true
             Log.i(TAG, "✅ isScanning state updated: ${_isScanning.value}")
-            Log.w(TAG, "⚠️ Skipping stream reconnection: useOnlineMode=$useOnlineMode, streamer=${if (streamer == null) "null" else "not null"}")
+            Log.w(TAG, "⚠️ Skipping stream reconnection: useOnlineMode=${_useOnlineMode.value}, streamer=${if (streamer == null) "null" else "not null"}")
         }
         
         Log.i(TAG, "🎉 Resume scanning process completed")
@@ -853,7 +1117,7 @@ class RecognitionViewModel(
     fun getClassifierDelegate(): String {
         return if (engine is TfLiteRecognitionEngine) {
             engine.getActiveDelegate()
-        } else if (useOnlineMode) {
+        } else if (_useOnlineMode.value) {
             "gRPC Streaming"
         } else {
             "Unknown"
@@ -863,7 +1127,7 @@ class RecognitionViewModel(
     fun getClassifierModelVariant(): String {
         return if (engine is TfLiteRecognitionEngine) {
             engine.getModelVariant()
-        } else if (useOnlineMode) {
+        } else if (_useOnlineMode.value) {
             "Server-Side"
         } else {
             "UNKNOWN"
@@ -877,7 +1141,7 @@ class RecognitionViewModel(
     suspend fun stop() {
         LogUtils.d(TAG) { "Stopping recognition backend" }
         try {
-            if (useOnlineMode && streamer != null) {
+            if (_useOnlineMode.value && streamer != null) {
                 streamer.disconnect()
             } else if (engine != null) {
                 engine.stop()
@@ -891,11 +1155,16 @@ class RecognitionViewModel(
         LogUtils.d(TAG) { "RecognitionViewModel cleared" }
         viewModelScope.launch { 
             try {
-                if (useOnlineMode && streamer != null) {
+                if (_useOnlineMode.value && streamer != null) {
                     streamer.disconnect()
                 } else if (engine != null) {
                     engine.stop()
                 }
+                
+                // Clean up offline translation engine
+                offlineTranslator?.close()
+                offlineTranslator = null
+                LogUtils.d(TAG) { "Offline translation engine cleaned up" }
             } catch (e: Exception) {
                 LogUtils.w(TAG) { "Error stopping backend in onCleared: ${e.message}" }
             }

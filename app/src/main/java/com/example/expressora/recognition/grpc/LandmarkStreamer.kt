@@ -41,6 +41,37 @@ class LandmarkStreamer(
         private const val MAX_BACKOFF_MS = 30000L
         private const val SUSTAINED_CONNECTION_MS = 10000L // 10 seconds - only reset retry counter after sustained connection
         private const val MIN_TIME_BETWEEN_ATTEMPTS_MS = 5000L // 5 seconds minimum between connection attempts
+        
+        /**
+         * Comprehensive translation instructions for sign language gloss sequences.
+         * These instructions inform the backend API about the nature of sign language glosses
+         * and how to properly translate them into natural spoken language.
+         */
+        private val TRANSLATION_INSTRUCTIONS = """
+            You are translating a sequence of sign language glosses into natural English and Filipino sentences.
+            
+            CONTEXT:
+            - The input is a sequence of sign language GLOSSES (written representations of signs)
+            - These glosses may be from American Sign Language (ASL), Filipino Sign Language (FSL), or a MIXED sequence of both
+            - Glosses are NOT regular words - they are written representations of signed gestures
+            - The sequence follows sentence patterns similar to sign language grammar
+            - The ORDER of glosses MATTERS - they form a temporal sequence that must be preserved
+            
+            TRANSLATION GUIDELINES:
+            1. Recognize that glosses represent signs, not spoken words
+            2. Translate the sequence while preserving the intended meaning
+            3. Simplify and naturalize the output to read like human spoken language
+            4. Maintain the logical flow and sequence of the original signs
+            5. Handle ASL topic-comment structure and FSL syntax patterns appropriately
+            6. If the sequence is mixed (ASL + FSL), translate accordingly while maintaining coherence
+            
+            OUTPUT REQUIREMENTS:
+            - Provide natural, fluent English translation
+            - Provide natural, fluent Filipino translation
+            - Both translations should read as if spoken by a native speaker
+            - Simplify complex sign language structures into natural language
+            - Preserve the semantic meaning and intent of the original sequence
+        """.trimIndent()
     }
     
     private var channel: ManagedChannel? = null
@@ -314,14 +345,15 @@ class LandmarkStreamer(
     /**
      * Translate a sequence of glosses using the unary TranslateSequence RPC.
      * 
-     * **Translation System Prompt:**
-     * The server-side translation service should use an enhanced system prompt that includes:
-     * - ASL Topic-Comment structure guidance
-     * - FSL syntax patterns and grammar rules
-     * - Code-switching handling instructions
-     * - Question formation rules for both languages
+     * **Translation Instructions:**
+     * This method automatically includes comprehensive translation instructions in the request
+     * that inform the backend API that:
+     * - The input is a sequence of sign language GLOSSES (ASL/FSL or mixed)
+     * - Glosses are written representations of signs, not regular words
+     * - The sequence follows sentence patterns and order matters (temporal sequence)
+     * - Output should be simplified and naturalized like human spoken language
      * 
-     * See TRANSLATION_SYSTEM_PROMPT.md for the complete recommended prompt template.
+     * The backend server should incorporate these instructions into its system prompt when calling the LLM.
      * 
      * @param glosses List of gloss labels to translate
      * @param tone Dominant tone tag (e.g., "/question", "/neutral")
@@ -348,6 +380,7 @@ class LandmarkStreamer(
             val requestBuilder = GlossSequence.newBuilder()
                 .addAllGlosses(glosses)
                 .setDominantTone(tone)
+                .setTranslationInstructions(TRANSLATION_INSTRUCTIONS)
             
             // Add origin if provided and proto supports it
             // Note: If GlossSequence proto doesn't have an origin field, this will be a no-op
@@ -368,7 +401,7 @@ class LandmarkStreamer(
             }
             
             val request = requestBuilder.build()
-            Log.i(TAG, "✅ Request built: ${glosses.size} glosses, tone=$tone, origin=$origin")
+            Log.i(TAG, "✅ Request built: ${glosses.size} glosses, tone=$tone, origin=$origin, instructions=${TRANSLATION_INSTRUCTIONS.length} chars")
             
             Log.i(TAG, "📡 Calling blocking stub.translateSequence()...")
             val startTime = System.currentTimeMillis()

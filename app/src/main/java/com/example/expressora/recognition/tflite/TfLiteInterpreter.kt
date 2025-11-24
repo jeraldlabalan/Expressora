@@ -69,6 +69,11 @@ class TfLiteInterpreter(
         val isQuantizedModel = modelAssetName.contains("int8", ignoreCase = true) ||
                                modelAssetName.contains("uint8", ignoreCase = true)
         
+        // CRITICAL: Detect LSTM models (Holistic LSTM with 30 frames × 237 features = 7110)
+        // LSTM models with Select TF Ops require CPU/XNNPack execution and Flex delegate
+        // GPU delegate does NOT support LSTM models with dynamic operations
+        val isLstmModel = featureDim == 7110 // 30 frames × 237 features (Left Hand 63 + Right Hand 63 + Face 111)
+        
         if (isQuantizedModel) {
             Log.i(TAG, "🔍 INT8/UINT8 quantized model detected: '$modelAssetName'")
             Log.w(TAG, "⚠️ CRITICAL: INT8 models require CPU-only execution. GPU and NNAPI delegates are DISABLED.")
@@ -77,12 +82,20 @@ class TfLiteInterpreter(
             Log.i(TAG, "✅ Forcing CPU-only execution for quantized model (XNNPACK will be used if available)")
         }
         
+        if (isLstmModel) {
+            Log.i(TAG, "🔍 LSTM model detected: featureDim=$featureDim (30 frames × 237 features)")
+            Log.w(TAG, "⚠️ CRITICAL: LSTM models with Select TF Ops require CPU/XNNPack execution. GPU delegate is DISABLED.")
+            Log.w(TAG, "⚠️ GPU delegate does NOT support LSTM models with dynamic operations and will cause failures.")
+            Log.i(TAG, "✅ Forcing CPU/XNNPack execution for LSTM model (Flex delegate will be used via tensorflow-lite-select-tf-ops)")
+        }
+        
         val opts = Interpreter.Options().apply { 
             val threads = PerformanceConfig.INTERPRETER_THREADS
             setNumThreads(threads)
             Log.i(TAG, "Interpreter threads: $threads")
             
             // For INT8 models, ONLY use CPU/XNNPACK - skip GPU and NNAPI
+            // For LSTM models, ONLY use CPU/XNNPACK - skip GPU and NNAPI (Select TF Ops not supported on GPU)
             // For FP16 models, prioritize GPU for optimal performance
             val isFp16Model = modelAssetName.contains("fp16", ignoreCase = true)
             val probeOrder = if (isQuantizedModel) {
@@ -91,6 +104,19 @@ class TfLiteInterpreter(
                     it.uppercase() !in listOf("GPU", "NNAPI") 
                 }
                 if (filtered.isEmpty() || !filtered.contains("XNNPACK") && !filtered.contains("CPU")) {
+                    listOf("XNNPACK", "CPU") // Fallback to safe options
+                } else {
+                    filtered
+                }
+            } else if (isLstmModel) {
+                // Force CPU/XNNPack for LSTM models (Select TF Ops requires Flex delegate, not supported on GPU)
+                val filtered = PerformanceConfig.DELEGATE_PROBE_ORDER.filter { 
+                    it.uppercase() !in listOf("GPU", "NNAPI") 
+                }
+                // Prioritize XNNPack for LSTM models (best performance on CPU)
+                if (filtered.contains("XNNPACK")) {
+                    listOf("XNNPACK") + filtered.filter { it.uppercase() != "XNNPACK" }
+                } else if (filtered.isEmpty() || !filtered.contains("CPU")) {
                     listOf("XNNPACK", "CPU") // Fallback to safe options
                 } else {
                     filtered
@@ -109,7 +135,11 @@ class TfLiteInterpreter(
             }
             
             Log.i(TAG, "Delegate probe order: ${probeOrder.joinToString(" → ")} " +
-                    if (isQuantizedModel) "(GPU/NNAPI disabled for INT8 model)" else "")
+                    when {
+                        isQuantizedModel -> "(GPU/NNAPI disabled for INT8 model)"
+                        isLstmModel -> "(GPU/NNAPI disabled for LSTM model with Select TF Ops)"
+                        else -> ""
+                    })
             
             for (delegateName in probeOrder) {
                 if (activeDelegate != "CPU") break // Already found a working delegate
@@ -119,6 +149,11 @@ class TfLiteInterpreter(
                         // CRITICAL: Skip GPU for INT8 models
                         if (isQuantizedModel) {
                             Log.w(TAG, "⛔ Skipping GPU delegate: not supported for INT8 models")
+                            continue
+                        }
+                        // CRITICAL: Skip GPU for LSTM models (Select TF Ops not supported on GPU)
+                        if (isLstmModel) {
+                            Log.w(TAG, "⛔ Skipping GPU delegate: not supported for LSTM models with Select TF Ops")
                             continue
                         }
                         
@@ -145,6 +180,11 @@ class TfLiteInterpreter(
                             Log.w(TAG, "⛔ Skipping NNAPI delegate: not reliably supported for INT8 models")
                             continue
                         }
+                        // CRITICAL: Skip NNAPI for LSTM models (Select TF Ops may not be reliably supported)
+                        if (isLstmModel) {
+                            Log.w(TAG, "⛔ Skipping NNAPI delegate: Select TF Ops may not be reliably supported on NNAPI")
+                            continue
+                        }
                         
                         if (PerformanceConfig.USE_NNAPI && activeDelegate == "CPU") {
                             try {
@@ -162,7 +202,11 @@ class TfLiteInterpreter(
                                 setUseXNNPACK(true)
                                 activeDelegate = "XNNPACK"
                                 Log.i(TAG, "✓ XNNPACK delegate enabled " +
-                                        if (isQuantizedModel) "(optimized for INT8)" else "")
+                                        when {
+                                            isQuantizedModel -> "(optimized for INT8)"
+                                            isLstmModel -> "(optimized for LSTM with Select TF Ops)"
+                                            else -> ""
+                                        })
                             } catch (e: Exception) {
                                 Log.w(TAG, "XNNPACK not available: ${e.message}")
                             }
@@ -172,11 +216,23 @@ class TfLiteInterpreter(
             }
             
             if (activeDelegate == "CPU") {
-                if (isQuantizedModel) {
-                    Log.i(TAG, "✅ Using CPU for INT8 model (correct configuration)")
-                } else {
-                Log.i(TAG, "Using CPU fallback (no hardware acceleration)")
+                when {
+                    isQuantizedModel -> {
+                        Log.i(TAG, "✅ Using CPU for INT8 model (correct configuration)")
+                    }
+                    isLstmModel -> {
+                        Log.i(TAG, "✅ Using CPU for LSTM model (correct configuration for Select TF Ops)")
+                    }
+                    else -> {
+                        Log.i(TAG, "Using CPU fallback (no hardware acceleration)")
+                    }
                 }
+            }
+            
+            // Log Flex delegate availability for LSTM models
+            if (isLstmModel) {
+                Log.i(TAG, "✅ LSTM model configuration: Select TF Ops dependency loaded, Flex delegate will be used automatically")
+                Log.i(TAG, "✅ If you see 'requires Flex delegate' error, ensure tensorflow-lite-select-tf-ops:2.14.0 is in dependencies")
             }
         }
         
@@ -1309,6 +1365,165 @@ class TfLiteInterpreter(
                     staticOutputFrameCount = 0
                 }
                 lastOutputHash = outputHashAfter
+                
+                MultiOutputResult(glossOutput[0], null)
+            }
+        }
+        
+        return glossLogits
+    }
+    
+    /**
+     * Run inference with ByteBuffer input (for LSTM sequence models).
+     * Accepts pre-formatted ByteBuffer directly, bypassing FloatArray conversion.
+     * 
+     * @param inputBuffer ByteBuffer containing scaled features (e.g., 30 frames × 237 features = 7110 floats)
+     * @return MultiOutputResult with gloss and origin logits
+     */
+    fun runMultiOutputSequence(inputBuffer: ByteBuffer): MultiOutputResult {
+        inferenceCallCount++
+        
+        // Rewind buffer to ensure we read from start
+        inputBuffer.rewind()
+        
+        // Verify input tensor shape for LSTM models
+        try {
+            val inputTensor = interpreter.getInputTensor(0)
+            val tensorShape = inputTensor.shape()
+            LogUtils.debugIfVerbose(TAG) { "LSTM input tensor: shape=${tensorShape.contentToString()}, bufferSize=${inputBuffer.capacity()} bytes" }
+        } catch (e: Exception) {
+            Log.w(TAG, "⚠️ Error validating input tensor: ${e.message}")
+        }
+        
+        // Ensure ByteBuffer is ready for reading
+        inputBuffer.rewind()
+        val expectedBufferSize = if (isInputQuantized) featureDim else (4 * featureDim)
+        // For LSTM models, featureDim is 7110 (30 frames × 237 features), so buffer size should be 7110 * 4 = 28440 bytes
+        if (inputBuffer.capacity() != expectedBufferSize && inputBuffer.capacity() != 28440) {
+            Log.w(TAG, "⚠️ LSTM buffer size: ${inputBuffer.capacity()} bytes (expected $expectedBufferSize or 28440 for sequence)")
+        }
+        inputBuffer.limit(inputBuffer.capacity())
+        
+        // CRITICAL: Resize input to [1, 30, 237] for LSTM model
+        // ByteBuffer is flat (7110 floats), but LSTM expects 3D tensor [batch=1, time=30, features=237]
+        try {
+            // Check current shape first
+            val currentShape = interpreter.getInputTensor(0).shape()
+            LogUtils.d(TAG) { "📐 Current input tensor shape: ${currentShape.contentToString()}" }
+            
+            // Resize to [1, 30, 237] if not already correct
+            val targetShape = intArrayOf(1, 30, 237)
+            if (!currentShape.contentEquals(targetShape)) {
+                LogUtils.i(TAG) { "🔄 Resizing input tensor from ${currentShape.contentToString()} to [1, 30, 237]" }
+                interpreter.resizeInput(0, targetShape)
+                interpreter.allocateTensors() // Critical after resize
+                
+                // Verify resize succeeded
+                val newShape = interpreter.getInputTensor(0).shape()
+                if (newShape.contentEquals(targetShape)) {
+                    LogUtils.i(TAG) { "✅ LSTM input shape successfully resized to [1, 30, 237]" }
+                } else {
+                    Log.e(TAG, "❌ Resize failed! Expected [1, 30, 237], got ${newShape.contentToString()}")
+                    throw IllegalStateException("Failed to resize input tensor to [1, 30, 237]. Current shape: ${newShape.contentToString()}")
+                }
+            } else {
+                LogUtils.d(TAG) { "✅ Input tensor already has correct shape [1, 30, 237]" }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ CRITICAL: Failed to prepare input tensor for LSTM inference", e)
+            throw IllegalStateException("Cannot run LSTM inference: input tensor shape setup failed", e)
+        }
+        
+        // Verify expected output size (should be 250 classes for new LSTM model)
+        val expectedOutputSize = numClasses // Dynamically read from model
+        LogUtils.debugIfVerbose(TAG) { "LSTM expected output size: $expectedOutputSize classes" }
+        
+        // Create output buffers
+        val glossLogits = if (isOutputQuantized) {
+            val quantizedOutput = Array(1) { ByteArray(numClasses) }
+            
+            // Verify output buffer size matches model output [1, numClasses]
+            if (quantizedOutput[0].size != expectedOutputSize) {
+                Log.w(TAG, "⚠️ Output buffer size mismatch: ${quantizedOutput[0].size} != $expectedOutputSize (expected [1, $expectedOutputSize])")
+            }
+            
+            if (hasMultiHead && interpreter.outputTensorCount > 1) {
+                val originQuantizedOutput = if (isOriginOutputQuantized) {
+                    Array(1) { ByteArray(originOutputSize) }
+                } else {
+                    null
+                }
+                val originFloatOutput = if (!isOriginOutputQuantized) {
+                    Array(1) { FloatArray(originOutputSize) }
+                } else {
+                    null
+                }
+                
+                val outputs = mutableMapOf<Int, Any>(0 to quantizedOutput)
+                if (originQuantizedOutput != null) {
+                    outputs[1] = originQuantizedOutput
+                } else if (originFloatOutput != null) {
+                    outputs[1] = originFloatOutput
+                }
+                
+                // Run inference with ByteBuffer input
+                inputBuffer.rewind()
+                interpreter.runForMultipleInputsOutputs(arrayOf(inputBuffer), outputs)
+                
+                // Dequantize outputs
+                val glossFloat = FloatArray(numClasses) { i ->
+                    dequantizeByte(quantizedOutput[0][i], outputScale, outputZeroPoint)
+                }
+                val originFloat = if (originQuantizedOutput != null) {
+                    FloatArray(originOutputSize) { i ->
+                        dequantizeByte(originQuantizedOutput[0][i], originOutputScale, originOutputZeroPoint)
+                    }
+                } else {
+                    originFloatOutput?.get(0)
+                }
+                
+                MultiOutputResult(glossFloat, originFloat)
+            } else {
+                // Single output - use runForMultipleInputsOutputs for safer tensor mapping
+                inputBuffer.rewind()
+                val inputs = arrayOf(inputBuffer)
+                val outputs = mapOf(0 to quantizedOutput)
+                interpreter.runForMultipleInputsOutputs(inputs, outputs)
+                
+                // Dequantize
+                val glossFloat = FloatArray(numClasses) { i ->
+                    dequantizeByte(quantizedOutput[0][i], outputScale, outputZeroPoint)
+                }
+                
+                MultiOutputResult(glossFloat, null)
+            }
+        } else {
+            // Float output
+            val glossOutput = Array(1) { FloatArray(numClasses) }
+            
+            // Verify output buffer size matches model output [1, numClasses]
+            if (glossOutput[0].size != expectedOutputSize) {
+                Log.w(TAG, "⚠️ Output buffer size mismatch: ${glossOutput[0].size} != $expectedOutputSize (expected [1, $expectedOutputSize])")
+            }
+            
+            if (hasMultiHead && interpreter.outputTensorCount > 1) {
+                val originOutput = Array(1) { FloatArray(originOutputSize) }
+                val outputs = mutableMapOf<Int, Any>(
+                    0 to glossOutput,
+                    1 to originOutput
+                )
+                
+                // Run inference with ByteBuffer input
+                inputBuffer.rewind()
+                interpreter.runForMultipleInputsOutputs(arrayOf(inputBuffer), outputs)
+                
+                MultiOutputResult(glossOutput[0], originOutput[0])
+            } else {
+                // Single output - use runForMultipleInputsOutputs for safer tensor mapping
+                inputBuffer.rewind()
+                val inputs = arrayOf(inputBuffer)
+                val outputs = mapOf(0 to glossOutput)
+                interpreter.runForMultipleInputsOutputs(inputs, outputs)
                 
                 MultiOutputResult(glossOutput[0], null)
             }

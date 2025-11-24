@@ -41,6 +41,7 @@ message RecognitionEvent {
 message GlossSequence {
     repeated string glosses = 1;    // List of gloss labels
     string dominant_tone = 2;       // The tone detected during the sequence (e.g., "/question")
+    string translation_instructions = 3;  // Comprehensive instructions for translating sign language glosses
 }
 
 // Translation result from TranslateSequence
