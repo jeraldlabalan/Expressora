@@ -42,9 +42,9 @@ object RoiCoordinateMapper {
         val zInFull = zInCropped // Z doesn't need offset
 
         // Normalize back to full image coordinates (0-1)
-        val xNormalized = xInFull / fullWidth
-        val yNormalized = yInFull / fullHeight
-        val zNormalized = zInFull / fullWidth
+        val xNormalized = xInFull.toFloat() / fullWidth.toFloat()
+        val yNormalized = yInFull.toFloat() / fullHeight.toFloat()
+        val zNormalized = zInFull.toFloat() / fullWidth.toFloat()
 
         return Point3(xNormalized, yNormalized, zNormalized)
     }

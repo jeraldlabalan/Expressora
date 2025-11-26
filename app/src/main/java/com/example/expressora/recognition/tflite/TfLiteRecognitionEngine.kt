@@ -7,6 +7,7 @@ import com.example.expressora.recognition.config.PerformanceConfig
 import com.example.expressora.recognition.utils.LogUtils
 import com.example.expressora.BuildConfig
 import com.example.expressora.recognition.diagnostics.RecognitionDiagnostics
+import com.example.expressora.recognition.diagnostics.ConfidenceDiagnostics
 import com.example.expressora.recognition.engine.RecognitionEngine
 import com.example.expressora.recognition.model.GlossEvent
 import com.example.expressora.recognition.model.ModelSignature
@@ -20,6 +21,8 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import org.tensorflow.lite.Interpreter
 import org.tensorflow.lite.support.common.FileUtil
 import java.nio.ByteBuffer
@@ -38,6 +41,8 @@ class TfLiteRecognitionEngine(
     private val TAG = "TfLiteRecognitionEngine"
     private val appContext = context.applicationContext
     private val labelLock = Any()
+    // CRITICAL: Mutex to prevent Scudo race condition (thread-safe inference gate)
+    private val inferenceMutex = Mutex()
     // FP32 model is always used now - no other variants
     private val modelVariant: String = "FP32"
     
@@ -82,6 +87,11 @@ class TfLiteRecognitionEngine(
     val results: Flow<RecognitionResult> = _results.asSharedFlow()
 
     init {
+        // Clear any cached results on initialization
+        cachedResult = null
+        cacheTimestamp = 0L
+        Log.i(TAG, "🧹 Cache cleared on engine initialization")
+        
         // Load labels and origin stats
         labels = LabelMap.load(appContext, labelAsset)
         mappedLabels = LabelMap.loadMapped(appContext, labelMappedAsset)
@@ -94,7 +104,27 @@ class TfLiteRecognitionEngine(
     }
 
     override suspend fun stop() {
-        interpreter?.close()
+        // CRITICAL: Acquire lock before closing to prevent closing while inference is running
+        inferenceMutex.withLock {
+            interpreter?.close()
+            interpreter = null
+            Log.i(TAG, "🛑 Interpreter closed safely")
+        }
+    }
+    
+    /**
+     * Clear in-memory result cache to force fresh predictions.
+     * Useful for testing or when model is updated.
+     */
+    fun clearCache() {
+        cachedResult = null
+        cacheTimestamp = 0L
+        rollingBuffer.clear()
+        lastFeatureVectorHash = 0
+        lastRawLogitsHash = 0
+        staticOutputFrameCount = 0
+        lastRawLogits = null
+        Log.i(TAG, "🧹 Cache cleared: result cache, rolling buffer, and state reset")
     }
 
     override suspend fun onLandmarks(feature: FloatArray) {
@@ -227,13 +257,14 @@ class TfLiteRecognitionEngine(
                     rollingBuffer.getAverage()
                 }
                 
-                // DEBUG: Log averaged logits (only in debug builds)
-                val avgLogitsStats = calculateFeatureStats(avgLogits)
-                LogUtils.debugIfVerbose(TAG) { "Averaged logits stats: size=${avgLogits.size}, " +
-                        "min=${avgLogitsStats.min}, max=${avgLogitsStats.max}, mean=${avgLogitsStats.mean}" }
+                // DEBUG: Log averaged probabilities (only in debug builds)
+                // NOTE: Model already outputs probabilities (softmax applied in model), so we use them directly
+                val avgProbsStats = calculateFeatureStats(avgLogits)
+                LogUtils.debugIfVerbose(TAG) { "Averaged probabilities stats: size=${avgLogits.size}, " +
+                        "min=${avgProbsStats.min}, max=${avgProbsStats.max}, mean=${avgProbsStats.mean}" }
                 
-                // Apply softmax
-                val probs = softmax(avgLogits)
+                // Model already outputs probabilities (sum to ~1.0), so use them directly - DO NOT apply softmax again!
+                val probs = avgLogits
                 
                 // DEBUG: Log softmax probabilities (top 5) - only in debug builds
                 val topProbs = probs.mapIndexed { index, value -> index to value }
@@ -253,6 +284,12 @@ class TfLiteRecognitionEngine(
                 // DEBUG: Log final prediction (only in debug builds)
                 LogUtils.debugIfVerbose(TAG) { "Final prediction: label='$mappedLabel' (raw='$rawLabel'), " +
                         "index=$bestIndex, confidence=$bestConf (${(bestConf * 100).toInt()}%)" }
+                
+                // DIAGNOSTIC: Analyze low confidence issues
+                if (bestConf < 0.5f) {
+                    Log.w(TAG, "⚠️ LOW CONFIDENCE DETECTED: ${(bestConf * 100).toInt()}% for '$mappedLabel'")
+                    ConfidenceDiagnostics.logDiagnostics(avgLogits, probs, feature)
+                }
                 
                 // Resolve origin
                 val originBadge = if (result.originLogits != null) {
@@ -348,8 +385,10 @@ class TfLiteRecognitionEngine(
      * @param inputBuffer ByteBuffer containing scaled features (30 frames × 237 features = 7110 floats)
      */
     suspend fun onLandmarksSequence(inputBuffer: ByteBuffer) {
+        Log.e(TAG, "🚀 onLandmarksSequence() CALLED - buffer capacity: ${inputBuffer.capacity()} bytes")
         scope.launch {
             try {
+                Log.e(TAG, "🚀 onLandmarksSequence() coroutine started")
                 RecognitionDiagnostics.recordFrame()
                 if (PerformanceConfig.VERBOSE_LOGGING) {
                     RecognitionDiagnostics.logFPSIfNeeded()
@@ -357,34 +396,127 @@ class TfLiteRecognitionEngine(
                 
                 // Ensure labels are loaded
                 ensureLabels()
-                val tflite = obtainInterpreter()
+                Log.e(TAG, "✅ Labels ensured")
+                
+                // CRITICAL: Verify interpreter is available before inference
+                val tflite = try {
+                    obtainInterpreter()
+                } catch (e: Exception) {
+                    Log.e(TAG, "❌ CRITICAL: Failed to obtain interpreter for LSTM inference", e)
+                    Log.e(TAG, "❌ Interpreter error type: ${e.javaClass.simpleName}, message: ${e.message}")
+                    _events.emit(GlossEvent.Error("Interpreter initialization failed: ${e.message ?: e.javaClass.simpleName}"))
+                    return@launch
+                }
+                
+                if (tflite == null) {
+                    Log.e(TAG, "❌ CRITICAL: Interpreter is null!")
+                    _events.emit(GlossEvent.Error("Interpreter is null"))
+                    return@launch
+                }
+                
+                Log.e(TAG, "✅ Interpreter obtained successfully")
                 
                 // Rewind buffer to ensure we read from start
                 inputBuffer.rewind()
                 
-                LogUtils.d(TAG) { "🔄 Running LSTM inference on sequence buffer: size=${inputBuffer.capacity()} bytes" }
+                Log.e(TAG, "🔄 Running LSTM inference on sequence buffer: size=${inputBuffer.capacity()} bytes")
                 
-                // Run inference with ByteBuffer directly (bypasses FloatArray conversion)
-                val result = tflite.runMultiOutputSequence(inputBuffer)
+                // --- SANITY CHECK ---
+                if (inputBuffer.capacity() >= 40) { // Ensure we have at least 10 floats
+                    val debugArr = FloatArray(10)
+                    val originalPos = inputBuffer.position()
+                    inputBuffer.position(0)
+                    inputBuffer.asFloatBuffer().get(debugArr)
+                    inputBuffer.position(originalPos) // Reset position!
+                    
+                    val debugStr = debugArr.joinToString(", ") { "%.3f".format(it) }
+                    android.util.Log.e("SANITY_CHECK", "🔍 MODEL INPUT: [$debugStr ...]")
+                    
+                    // Check for "Dead" Input
+                    val isDead = debugArr.all { it == 0f } || debugArr.all { it == -1f }
+                    if (isDead) {
+                        android.util.Log.e("SANITY_CHECK", "❌ WARNING: INPUT IS DEAD (All Zeros or -1)")
+                    }
+                }
+                // --------------------
                 
-                LogUtils.debugIfVerbose(TAG) { "LSTM inference completed, processing result" }
+                // Run LSTM inference with enhanced error handling (THREAD-SAFE BLOCK)
+                Log.e(TAG, "🔍 About to call runMultiOutputSequence() - acquiring mutex...")
+                val result = try {
+                    inferenceMutex.withLock {
+                        Log.e(TAG, "🔍 Mutex acquired, calling runMultiOutputSequence()...")
+                        // Rewind buffer before reading (inside lock to ensure consistency)
+                        inputBuffer.rewind()
+                        val inferenceResult = tflite.runMultiOutputSequence(inputBuffer)
+                        Log.e(TAG, "✅ runMultiOutputSequence() completed successfully")
+                        inferenceResult
+                    }
+                } catch (e: IllegalStateException) {
+                    Log.e(TAG, "❌ IllegalStateException in runMultiOutputSequence()", e)
+                    // Re-throw IllegalStateException (already logged in TfLiteInterpreter)
+                    throw e
+                } catch (e: Exception) {
+                    Log.e(TAG, "❌ CRITICAL: LSTM inference call failed!", e)
+                    Log.e(TAG, "❌ Inference error type: ${e.javaClass.simpleName}, message: ${e.message}")
+                    Log.e(TAG, "❌ Buffer state: capacity=${inputBuffer.capacity()}, position=${inputBuffer.position()}, limit=${inputBuffer.limit()}")
+                    throw e
+                }
+                
+                Log.e(TAG, "✅ LSTM inference completed, processing result")
                 
                 // Process output similar to onLandmarks but without mean check
                 val logitsStats = calculateFeatureStats(result.glossLogits)
                 
+                // DIAGNOSTIC: Log raw model output statistics
+                val rawMax = result.glossLogits.maxOrNull() ?: 0f
+                val rawMin = result.glossLogits.minOrNull() ?: 0f
+                val rawMean = result.glossLogits.average().toFloat()
+                val rawStd = kotlin.math.sqrt(result.glossLogits.map { (it - rawMean) * (it - rawMean) }.average()).toFloat()
+                val rawSum = result.glossLogits.sum()
+                val rawTop5 = result.glossLogits.mapIndexed { idx, value -> idx to value }
+                    .sortedByDescending { it.second }
+                    .take(5)
+                
+                Log.e(TAG, "📊 RAW MODEL OUTPUT (from inference):")
+                Log.e(TAG, "   Range: [%.6f, %.6f] (span: %.6f)".format(rawMin, rawMax, rawMax - rawMin))
+                Log.e(TAG, "   Mean: %.6f, Std: %.6f, Sum: %.6f".format(rawMean, rawStd, rawSum))
+                Log.e(TAG, "   Top 5: ${rawTop5.joinToString { "idx[${it.first}]=${"%.6f".format(it.second)}" }}")
+                
                 // Skip mean check for sequence data (already scaled in buffer)
                 
+                // DIAGNOSTIC: Log rolling buffer state BEFORE adding
+                val bufferSizeBefore = rollingBuffer.size()
+                Log.e(TAG, "🔄 ROLLING BUFFER STATE (before adding): size=$bufferSizeBefore")
+                
                 // Add to rolling buffer
-                val avgLogits = if (bypassRollingBuffer) {
-                    LogUtils.d(TAG) { "⚠️ BYPASSING rolling buffer - using raw logits" }
+                // NOTE: Model already outputs probabilities (softmax applied in model), so we use them directly
+                val avgProbs = if (bypassRollingBuffer) {
+                    Log.e(TAG, "⚠️ BYPASSING rolling buffer - using raw probabilities")
                     result.glossLogits
                 } else {
                     rollingBuffer.add(result.glossLogits)
+                    val bufferSizeAfter = rollingBuffer.size()
+                    Log.e(TAG, "✅ Added to rolling buffer: size=$bufferSizeAfter (was $bufferSizeBefore)")
                     rollingBuffer.getAverage()
                 }
                 
-                // Apply softmax
-                val probs = softmax(avgLogits)
+                // DIAGNOSTIC: Log averaged probabilities statistics
+                val avgMax = avgProbs.maxOrNull() ?: 0f
+                val avgMin = avgProbs.minOrNull() ?: 0f
+                val avgMean = avgProbs.average().toFloat()
+                val avgStd = kotlin.math.sqrt(avgProbs.map { (it - avgMean) * (it - avgMean) }.average()).toFloat()
+                val avgSum = avgProbs.sum()
+                val avgTop5 = avgProbs.mapIndexed { idx, value -> idx to value }
+                    .sortedByDescending { it.second }
+                    .take(5)
+                
+                Log.e(TAG, "📊 AVERAGED PROBABILITIES (after rolling buffer):")
+                Log.e(TAG, "   Range: [%.6f, %.6f] (span: %.6f)".format(avgMin, avgMax, avgMax - avgMin))
+                Log.e(TAG, "   Mean: %.6f, Std: %.6f, Sum: %.6f".format(avgMean, avgStd, avgSum))
+                Log.e(TAG, "   Top 5: ${avgTop5.joinToString { "idx[${it.first}]=${"%.6f".format(it.second)}" }}")
+                
+                // Model already outputs probabilities (sum to ~1.0), so use them directly - DO NOT apply softmax again!
+                val probs = avgProbs
                 
                 // Get top prediction
                 val bestIndex = probs.indices.maxByOrNull { probs[it] } ?: 0
@@ -392,8 +524,46 @@ class TfLiteRecognitionEngine(
                 val rawLabel = labels.getOrElse(bestIndex) { "CLASS_$bestIndex" }
                 val mappedLabel = mappedLabels.getOrElse(bestIndex) { rawLabel }
                 
-                LogUtils.debugIfVerbose(TAG) { "LSTM prediction: label='$mappedLabel' (raw='$rawLabel'), " +
-                        "index=$bestIndex, confidence=$bestConf (${(bestConf * 100).toInt()}%)" }
+                // DIAGNOSTIC: Log confidence calculation and label mapping
+                Log.e(TAG, "🎯 CONFIDENCE CALCULATION:")
+                Log.e(TAG, "   Best index: $bestIndex")
+                Log.e(TAG, "   Best confidence: %.6f (%d%%)".format(bestConf, (bestConf * 100).toInt()))
+                Log.e(TAG, "   Raw label: '$rawLabel'")
+                Log.e(TAG, "   Mapped label: '$mappedLabel'")
+                Log.e(TAG, "   Label mapping: ${if (rawLabel == mappedLabel) "no mapping" else "mapped from '$rawLabel' to '$mappedLabel'"}")
+                
+                // DIAGNOSTIC: Log top 5 predictions with labels
+                val top5Predictions = probs.mapIndexed { idx, value -> 
+                    Triple(idx, labels.getOrElse(idx) { "CLASS_$idx" }, mappedLabels.getOrElse(idx) { labels.getOrElse(idx) { "CLASS_$idx" } })
+                }
+                    .sortedByDescending { probs[it.first] }
+                    .take(5)
+                
+                Log.e(TAG, "🏆 TOP 5 PREDICTIONS:")
+                top5Predictions.forEachIndexed { rank, (idx, raw, mapped) ->
+                    val conf = probs[idx]
+                    Log.e(TAG, "   ${rank + 1}. idx[$idx]: '$mapped' (raw: '$raw') = %.6f (%d%%)".format(conf, (conf * 100).toInt()))
+                }
+                
+                Log.e(TAG, "✅ LSTM prediction: label='$mappedLabel' (raw='$rawLabel'), index=$bestIndex, confidence=$bestConf (${(bestConf * 100).toInt()}%)")
+                
+                // DIAGNOSTIC: Analyze low confidence issues
+                if (bestConf < 0.5f) {
+                    Log.e(TAG, "⚠️ LOW CONFIDENCE DETECTED (LSTM): ${(bestConf * 100).toInt()}% for '$mappedLabel'")
+                    ConfidenceDiagnostics.logDiagnostics(avgProbs, probs, null)
+                }
+                
+                // DIAGNOSTIC SUMMARY: Log complete pipeline state after inference
+                logDiagnosticSummary(
+                    rawOutput = result.glossLogits,
+                    averagedOutput = avgProbs,
+                    finalProbs = probs,
+                    bestIndex = bestIndex,
+                    bestConf = bestConf,
+                    rawLabel = rawLabel,
+                    mappedLabel = mappedLabel,
+                    rollingBufferSize = if (bypassRollingBuffer) 0 else rollingBuffer.size()
+                )
                 
                 // Resolve origin
                 val originBadge = if (result.originLogits != null) {
@@ -435,7 +605,7 @@ class TfLiteRecognitionEngine(
                                 value = value
                             )
                         },
-                    averagedLogits = avgLogits.mapIndexed { idx, value -> idx to value }
+                    averagedLogits = avgProbs.mapIndexed { idx, value -> idx to value }
                         .sortedByDescending { it.second }
                         .take(5)
                         .map { (idx, value) ->
@@ -631,8 +801,8 @@ class TfLiteRecognitionEngine(
     private fun createInterpreter(numClasses: Int): TfLiteInterpreter {
         // CRITICAL: Verify model name - should ALWAYS be FP32 now
         Log.i(TAG, "🔍 Creating TFLite interpreter with model: '$modelAsset'")
-        if (!modelAsset.contains("expressora_unified_v3.tflite")) {
-            Log.e(TAG, "❌ CRITICAL ERROR: Wrong model selected! Expected 'expressora_unified_v3.tflite' (FP32), got: '$modelAsset'")
+        if (!modelAsset.contains("expressora_unified_v19.tflite")) {
+            Log.e(TAG, "❌ CRITICAL ERROR: Wrong model selected! Expected 'expressora_unified_v19.tflite' (FP32), got: '$modelAsset'")
         } else {
             Log.i(TAG, "✅ Model verified: FP32 model '$modelAsset' (Float32 inputs = 28440 bytes)")
         }
@@ -664,6 +834,109 @@ class TfLiteRecognitionEngine(
         val exps = logits.map { exp((it - maxLogit).toDouble()).toFloat() }
         val sumExps = exps.sum()
         return exps.map { it / sumExps }.toFloatArray()
+    }
+    
+    /**
+     * Log complete diagnostic summary after each inference cycle.
+     * Provides a comprehensive view of the entire pipeline state.
+     */
+    private fun logDiagnosticSummary(
+        rawOutput: FloatArray,
+        averagedOutput: FloatArray,
+        finalProbs: FloatArray,
+        bestIndex: Int,
+        bestConf: Float,
+        rawLabel: String,
+        mappedLabel: String,
+        rollingBufferSize: Int
+    ) {
+        Log.e(TAG, "═══════════════════════════════════════════════════════════════")
+        Log.e(TAG, "📋 DIAGNOSTIC SUMMARY - Complete Pipeline State")
+        Log.e(TAG, "═══════════════════════════════════════════════════════════════")
+        
+        // Input Pipeline Summary
+        Log.e(TAG, "📥 INPUT PIPELINE SUMMARY:")
+        Log.e(TAG, "   → Feature extraction: MediaPipe landmarks → 237 features per frame")
+        Log.e(TAG, "   → Z-coordinate normalization: clamped to [-1,1] then mapped to [0,1]")
+        Log.e(TAG, "   → Feature scaling: [0,1] → [-1,1] using (value - 0.5) * 2.0")
+        Log.e(TAG, "   → Buffer: 30 frames × 237 features = 7110 floats")
+        Log.e(TAG, "   → ByteBuffer: 7110 floats × 4 bytes = 28440 bytes")
+        
+        // Model Input Summary
+        Log.e(TAG, "🔬 MODEL INPUT SUMMARY:")
+        Log.e(TAG, "   → Tensor shape: [1, 30, 237] (batch=1, time=30, features=237)")
+        Log.e(TAG, "   → Data type: FLOAT32")
+        Log.e(TAG, "   → Expected range: sentinels=-10.0, valid data in [-1.0, 1.0]")
+        
+        // Model Output Summary
+        val rawMax = rawOutput.maxOrNull() ?: 0f
+        val rawMin = rawOutput.minOrNull() ?: 0f
+        val rawMean = rawOutput.average().toFloat()
+        val rawStd = kotlin.math.sqrt(rawOutput.map { (it - rawMean) * (it - rawMean) }.average()).toFloat()
+        val rawSum = rawOutput.sum()
+        val rawEntropy = -rawOutput.sumOf { if (it > 0) it * kotlin.math.ln(it.toDouble()) else 0.0 }.toFloat()
+        val maxEntropy = kotlin.math.ln(rawOutput.size.toDouble()).toFloat()
+        
+        Log.e(TAG, "📊 MODEL OUTPUT SUMMARY (raw from inference):")
+        Log.e(TAG, "   → Range: [%.6f, %.6f] (span: %.6f)".format(rawMin, rawMax, rawMax - rawMin))
+        Log.e(TAG, "   → Mean: %.6f, Std: %.6f".format(rawMean, rawStd))
+        Log.e(TAG, "   → Sum: %.6f (if ~1.0, model outputs probabilities)".format(rawSum))
+        Log.e(TAG, "   → Entropy: %.6f / %.6f (%.1f%%) - higher = more uniform".format(rawEntropy, maxEntropy, (rawEntropy / maxEntropy * 100)))
+        
+        // Post-Processing Summary
+        val avgMax = averagedOutput.maxOrNull() ?: 0f
+        val avgMin = averagedOutput.minOrNull() ?: 0f
+        val avgMean = averagedOutput.average().toFloat()
+        val avgStd = kotlin.math.sqrt(averagedOutput.map { (it - avgMean) * (it - avgMean) }.average()).toFloat()
+        val avgSum = averagedOutput.sum()
+        
+        Log.e(TAG, "🔄 POST-PROCESSING SUMMARY:")
+        Log.e(TAG, "   → Rolling buffer size: $rollingBufferSize")
+        Log.e(TAG, "   → Averaged probabilities range: [%.6f, %.6f]".format(avgMin, avgMax))
+        Log.e(TAG, "   → Averaged probabilities mean: %.6f, Std: %.6f".format(avgMean, avgStd))
+        Log.e(TAG, "   → Averaged probabilities sum: %.6f".format(avgSum))
+        
+        // Final Prediction Summary
+        val finalMax = finalProbs.maxOrNull() ?: 0f
+        val finalMin = finalProbs.minOrNull() ?: 0f
+        val finalMean = finalProbs.average().toFloat()
+        val finalStd = kotlin.math.sqrt(finalProbs.map { (it - finalMean) * (it - finalMean) }.average()).toFloat()
+        val finalSum = finalProbs.sum()
+        
+        Log.e(TAG, "🎯 FINAL PREDICTION SUMMARY:")
+        Log.e(TAG, "   → Best index: $bestIndex")
+        Log.e(TAG, "   → Best confidence: %.6f (%d%%)".format(bestConf, (bestConf * 100).toInt()))
+        Log.e(TAG, "   → Raw label: '$rawLabel'")
+        Log.e(TAG, "   → Mapped label: '$mappedLabel'")
+        Log.e(TAG, "   → Final probabilities range: [%.6f, %.6f]".format(finalMin, finalMax))
+        Log.e(TAG, "   → Final probabilities mean: %.6f, Std: %.6f".format(finalMean, finalStd))
+        Log.e(TAG, "   → Final probabilities sum: %.6f".format(finalSum))
+        
+        // Top 5 Predictions
+        val top5 = finalProbs.mapIndexed { idx, value -> idx to value }
+            .sortedByDescending { it.second }
+            .take(5)
+        
+        Log.e(TAG, "🏆 TOP 5 PREDICTIONS:")
+        top5.forEachIndexed { rank, (idx, conf) ->
+            val label = labels.getOrElse(idx) { "CLASS_$idx" }
+            val mapped = mappedLabels.getOrElse(idx) { label }
+            Log.e(TAG, "   ${rank + 1}. idx[$idx]: '$mapped' (raw: '$label') = %.6f (%d%%)".format(conf, (conf * 100).toInt()))
+        }
+        
+        // Health Indicators
+        Log.e(TAG, "💊 HEALTH INDICATORS:")
+        val isUniform = (rawMax - rawMin) < 0.01f
+        val isLowConfidence = bestConf < 0.5f
+        val isHighEntropy = (rawEntropy / maxEntropy) > 0.9f
+        val isSumCorrect = kotlin.math.abs(rawSum - 1.0f) < 0.01f
+        
+        Log.e(TAG, "   → Output uniformity: ${if (isUniform) "❌ UNIFORM (model collapse)" else "✅ VARIED"}")
+        Log.e(TAG, "   → Confidence level: ${if (isLowConfidence) "❌ LOW (<50%)" else "✅ ACCEPTABLE"}")
+        Log.e(TAG, "   → Entropy level: ${if (isHighEntropy) "❌ HIGH (uniform distribution)" else "✅ NORMAL"}")
+        Log.e(TAG, "   → Sum check: ${if (isSumCorrect) "✅ ~1.0 (probabilities)" else "⚠️ NOT ~1.0 (logits)"}")
+        
+        Log.e(TAG, "═══════════════════════════════════════════════════════════════")
     }
     
     /**
@@ -715,5 +988,14 @@ private class RollingLogitsBuffer(private val size: Int) {
     @Synchronized
     fun clear() {
         buffer.clear()
+    }
+    
+    @Synchronized
+    fun size(): Int {
+        return buffer.size
+    }
+    
+    fun capacity(): Int {
+        return size
     }
 }

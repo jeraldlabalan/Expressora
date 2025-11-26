@@ -71,7 +71,7 @@ object LabelMap {
         return mappedLabels
     }
     
-    fun loadOriginStats(context: Context, assetName: String = "label_origin_stats.json"): Map<String, OriginStats> {
+    fun loadOriginStats(context: Context, assetName: String = "recognition/label_origin_stats_v11.json"): Map<String, OriginStats> {
         if (originStatsMap.isNotEmpty()) return originStatsMap
         
         originStatsMap = runCatching {

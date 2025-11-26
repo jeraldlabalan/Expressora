@@ -2,182 +2,258 @@ package com.example.expressora.recognition.feature
 
 import android.content.Context
 import android.util.Log
-import com.example.expressora.recognition.utils.NpyFileReader
-import com.example.expressora.recognition.utils.LogUtils
 
 /**
- * Utility to load and apply feature scaling (mean/std normalization).
+ * Robust Feature Scaler.
+ * Eliminates dependency on .npy files.
+ * Maps Valid Data [0.0, 1.0] -> [-1.0, 1.0].
+ * Maps Missing Data (entire sections) -> [-10.0] (Sentinel).
  * 
- * The retrained model requires features to be scaled using:
- *   scaled = (features - mean) / std
+ * CRITICAL: Only marks sections as missing if the ENTIRE section is zeros.
+ * Valid coordinates that happen to be 0.0 are scaled normally.
+ * This matches the training pipeline fix where 0.0 can be a valid coordinate.
  * 
- * This matches the preprocessing used during model training.
+ * IMPORTANT: Sentinel values (-10.0) are used for buffer quality checks and diagnostics,
+ * but they are REPLACED with 0.0 before model inference to match training data format.
+ * Training data used fillna(0) for missing values, so the model expects 0.0, not -10.0.
+ * The replacement happens in TfLiteInterpreter.runMultiOutputSequence() before inference.
  */
-class FeatureScaler private constructor(
-    private val mean: FloatArray,
-    private val std: FloatArray
-) {
-    private val TAG = "FeatureScaler"
-    
+class FeatureScaler private constructor() {
+
     companion object {
-        private const val FEATURE_MEAN_ASSET = "recognition/feature_mean_v2.npy"
-        private const val FEATURE_STD_ASSET = "recognition/feature_std_v2.npy"
-        private const val EXPECTED_FEATURE_DIM = 237 // Left Hand (63) + Right Hand (63) + Face (111)
-        private const val EPSILON = 1e-8f // Epsilon for numerical stability in normalization
+        private const val TAG = "FeatureScaler"
         
-        /**
-         * Create FeatureScaler by loading mean and std from assets.
-         * 
-         * @param context Android context
-         * @param featureDim Expected feature dimension (default 126)
-         * @return FeatureScaler instance, or null if loading failed
-         */
-        fun create(context: Context, featureDim: Int = EXPECTED_FEATURE_DIM): FeatureScaler? {
-            Log.i("FeatureScaler", "🔧 Creating FeatureScaler: featureDim=$featureDim")
-            
-            // Verify assets exist before attempting to load
-            // Note: assets.list("") only lists root directory, so we check by trying to open the files
-            try {
-                val hasMean = try {
-                    context.assets.open(FEATURE_MEAN_ASSET).use { true }
-                } catch (e: Exception) {
-                    false
-                }
-                
-                val hasStd = try {
-                    context.assets.open(FEATURE_STD_ASSET).use { true }
-                } catch (e: Exception) {
-                    false
-                }
-                
-                Log.i("FeatureScaler", "📂 Asset verification: feature_mean_v2.npy=${if (hasMean) "✅ EXISTS" else "❌ MISSING"}, feature_std_v2.npy=${if (hasStd) "✅ EXISTS" else "❌ MISSING"}")
-                
-                if (!hasMean || !hasStd) {
-                    // List available assets for debugging
-                    val rootAssets = context.assets.list("")?.toList() ?: emptyList()
-                    val recognitionAssets = try {
-                        context.assets.list("recognition")?.toList() ?: emptyList()
-                    } catch (e: Exception) {
-                        emptyList()
-                    }
-                    val allNpyFiles = (rootAssets + recognitionAssets.map { "recognition/$it" })
-                        .filter { it.contains("feature") || it.endsWith(".npy") }
-                    Log.e("FeatureScaler", "❌ CRITICAL: Asset files missing! Expected: $FEATURE_MEAN_ASSET, $FEATURE_STD_ASSET")
-                    Log.e("FeatureScaler", "📂 Available assets containing 'feature' or '.npy': ${allNpyFiles.joinToString(", ")}")
-                    return null
-                }
-            } catch (e: Exception) {
-                Log.e("FeatureScaler", "❌ Failed to verify assets: ${e.javaClass.simpleName} - ${e.message}", e)
-                return null
-            }
-            
-            Log.i("FeatureScaler", "📂 Loading mean from: $FEATURE_MEAN_ASSET")
-            val mean = try {
-                NpyFileReader.loadFloatArray(context, FEATURE_MEAN_ASSET, featureDim)
-            } catch (e: Exception) {
-                Log.e("FeatureScaler", "❌ EXCEPTION loading mean: ${e.javaClass.simpleName} - ${e.message}", e)
-                null
-            }
-            
-            Log.i("FeatureScaler", "📂 Loading std from: $FEATURE_STD_ASSET")
-            val std = try {
-                NpyFileReader.loadFloatArray(context, FEATURE_STD_ASSET, featureDim)
-            } catch (e: Exception) {
-                Log.e("FeatureScaler", "❌ EXCEPTION loading std: ${e.javaClass.simpleName} - ${e.message}", e)
-                null
-            }
-            
-            if (mean == null) {
-                Log.e("FeatureScaler", "❌ Failed to load mean from $FEATURE_MEAN_ASSET")
-            } else {
-                Log.d("FeatureScaler", "✅ Loaded mean: size=${mean.size}, range=[${mean.minOrNull()}, ${mean.maxOrNull()}], " +
-                        "mean=${mean.average()}, sample[0-4]=[${mean.slice(0 until minOf(5, mean.size)).joinToString()}]")
-            }
-            
-            if (std == null) {
-                Log.e("FeatureScaler", "❌ Failed to load std from $FEATURE_STD_ASSET")
-            } else {
-                Log.d("FeatureScaler", "✅ Loaded std: size=${std.size}, range=[${std.minOrNull()}, ${std.maxOrNull()}], " +
-                        "mean=${std.average()}, sample[0-4]=[${std.slice(0 until minOf(5, std.size)).joinToString()}]")
-            }
-            
-            if (mean == null || std == null) {
-                Log.e("FeatureScaler", "❌ Failed to load scaling parameters: mean=${mean != null}, std=${std != null}")
-                return null
-            }
-            
-            // Validate dimensions - CRITICAL: Must match expected feature dimension
-            if (mean.size != featureDim || std.size != featureDim) {
-                Log.e("FeatureScaler", "❌ Dimension mismatch: mean.size=${mean.size}, std.size=${std.size}, expected=$featureDim")
-                Log.e("FeatureScaler", "❌ CRITICAL: Make sure feature_mean_v2.npy and feature_std_v2.npy files (size $featureDim) are copied to app/src/main/assets/recognition/")
-                return null
-            }
-            
-            // Explicit validation for 237 features (catches missing/incorrect asset files early)
-            if (mean.size != 237 || std.size != 237) {
-                Log.e("FeatureScaler", "❌ CRITICAL: Expected 237 features (Left Hand 63 + Right Hand 63 + Face 111), " +
-                        "but got mean.size=${mean.size}, std.size=${std.size}")
-                Log.e("FeatureScaler", "❌ Make sure you copied the correct feature_mean_v2.npy and feature_std_v2.npy files from Python training pipeline")
-                return null
-            }
-            
-            Log.d("FeatureScaler", "✅ Dimension validation passed: both arrays are size $featureDim (237 features)")
-            
-            // Validate std values (should not be zero)
-            val zeroStdCount = std.count { it == 0f || it.isNaN() }
-            val zeroStdIndices = std.mapIndexed { index, value -> 
-                if (value == 0f || value.isNaN()) index else null 
-            }.filterNotNull()
-            if (zeroStdCount > 0) {
-                Log.w("FeatureScaler", "⚠️ Warning: $zeroStdCount std values are zero or NaN at indices: " +
-                        "${zeroStdIndices.take(10).joinToString()}${if (zeroStdIndices.size > 10) "..." else ""}, " +
-                        "will use 1.0 for those features")
-            } else {
-                Log.d("FeatureScaler", "✅ All std values are non-zero and valid")
-            }
-            
-            // Log statistics
-            val meanMin = mean.minOrNull() ?: 0f
-            val meanMax = mean.maxOrNull() ?: 0f
-            val meanMean = mean.average()
-            val stdMin = std.minOrNull() ?: 0f
-            val stdMax = std.maxOrNull() ?: 0f
-            val stdMean = std.average()
-            
-            Log.i("FeatureScaler", "✅ FeatureScaler initialized successfully: featureDim=$featureDim")
-            Log.d("FeatureScaler", "📊 Mean stats: range=[$meanMin, $meanMax], mean=$meanMean")
-            Log.d("FeatureScaler", "📊 Std stats: range=[$stdMin, $stdMax], mean=$stdMean, " +
-                    "zeroCount=$zeroStdCount, validCount=${std.size - zeroStdCount}")
-            
-            return FeatureScaler(mean, std)
+        // Section boundaries (matches training pipeline)
+        private const val LEFT_HAND_START = 0
+        private const val LEFT_HAND_END = 63  // 21 landmarks × 3 coords
+        private const val RIGHT_HAND_START = 63
+        private const val RIGHT_HAND_END = 126  // 21 landmarks × 3 coords
+        private const val FACE_START = 126
+        private const val FACE_END = 237  // 37 landmarks × 3 coords
+
+        fun create(context: Context): FeatureScaler {
+            Log.i(TAG, "✅ FeatureScaler initialized (Section-Based Sentinel Mode)")
+            return FeatureScaler()
         }
     }
-    
-    /**
-     * Apply feature scaling: scaled = (features - mean) / (std + epsilon)
-     * Uses epsilon 1e-8 for numerical stability (matches Python training pipeline).
-     * 
-     * @param features Raw feature vector (must be size 237)
-     * @return Scaled feature vector
-     */
+
     fun scale(features: FloatArray): FloatArray {
         val scaled = FloatArray(features.size)
+        
+        // Check which sections are missing (entire section is all zeros)
+        val leftHandMissing = isSectionAllZeros(features, LEFT_HAND_START, LEFT_HAND_END)
+        val rightHandMissing = isSectionAllZeros(features, RIGHT_HAND_START, RIGHT_HAND_END)
+        val faceMissing = isSectionAllZeros(features, FACE_START, FACE_END)
+        
+        // Calculate input statistics
+        var inputZeroCount = 0
+        var inputNonZeroCount = 0
+        var inputMin = Float.MAX_VALUE
+        var inputMax = Float.MIN_VALUE
+        var inputSum = 0f
+        
+        // Section-by-section input statistics
+        var leftHandInputMin = Float.MAX_VALUE
+        var leftHandInputMax = Float.MIN_VALUE
+        var leftHandInputSum = 0f
+        var leftHandInputCount = 0
+        
+        var rightHandInputMin = Float.MAX_VALUE
+        var rightHandInputMax = Float.MIN_VALUE
+        var rightHandInputSum = 0f
+        var rightHandInputCount = 0
+        
+        var faceInputMin = Float.MAX_VALUE
+        var faceInputMax = Float.MIN_VALUE
+        var faceInputSum = 0f
+        var faceInputCount = 0
+        
         for (i in features.indices) {
-            // Simple Shift & Scale: 0.0 -> -1.0, 1.0 -> 1.0
-            // Formula: (x - 0.5) * 2.0
-            scaled[i] = (features[i] - 0.5f) * 2.0f
+            val value = features[i]
+            if (value == 0f) {
+                inputZeroCount++
+            } else {
+                inputNonZeroCount++
+            }
+            if (value < inputMin) inputMin = value
+            if (value > inputMax) inputMax = value
+            inputSum += value
+            
+            // Section-specific statistics
+            when {
+                i < RIGHT_HAND_START -> {
+                    if (value < leftHandInputMin) leftHandInputMin = value
+                    if (value > leftHandInputMax) leftHandInputMax = value
+                    leftHandInputSum += value
+                    leftHandInputCount++
+                }
+                i < FACE_START -> {
+                    if (value < rightHandInputMin) rightHandInputMin = value
+                    if (value > rightHandInputMax) rightHandInputMax = value
+                    rightHandInputSum += value
+                    rightHandInputCount++
+                }
+                else -> {
+                    if (value < faceInputMin) faceInputMin = value
+                    if (value > faceInputMax) faceInputMax = value
+                    faceInputSum += value
+                    faceInputCount++
+                }
+            }
         }
+        val inputMean = inputSum / features.size
+        val inputStd = kotlin.math.sqrt(features.map { (it - inputMean) * (it - inputMean) }.average()).toFloat()
+        
+        // Scale each feature based on section missing status
+        var sentinelCount = 0
+        var scaledCount = 0
+        var validZeroCount = 0  // Valid 0.0 coordinates that are scaled (not sentinel)
+        var scaledMin = Float.MAX_VALUE
+        var scaledMax = Float.MIN_VALUE
+        var scaledSum = 0f
+        
+        // Section-by-section output statistics
+        var leftHandScaledMin = Float.MAX_VALUE
+        var leftHandScaledMax = Float.MIN_VALUE
+        var leftHandScaledSum = 0f
+        var leftHandScaledCount = 0
+        
+        var rightHandScaledMin = Float.MAX_VALUE
+        var rightHandScaledMax = Float.MIN_VALUE
+        var rightHandScaledSum = 0f
+        var rightHandScaledCount = 0
+        
+        var faceScaledMin = Float.MAX_VALUE
+        var faceScaledMax = Float.MIN_VALUE
+        var faceScaledSum = 0f
+        var faceScaledCount = 0
+        
+        // Sample transformations (first 10 values)
+        val sampleTransformations = mutableListOf<String>()
+        
+        for (i in features.indices) {
+            val value = features[i]
+            val isInMissingSection = when {
+                i < RIGHT_HAND_START -> leftHandMissing
+                i < FACE_START -> rightHandMissing
+                else -> faceMissing
+            }
+            
+            if (isInMissingSection) {
+                scaled[i] = -10.0f  // Missing section → sentinel value
+                sentinelCount++
+            } else {
+                // Valid data: Scale to [-1, 1] (even if value is 0.0)
+                val scaledValue = (value - 0.5f) * 2.0f
+                scaled[i] = scaledValue
+                scaledCount++
+                if (value == 0f) {
+                    validZeroCount++  // This is a valid 0.0 coordinate being scaled
+                }
+                if (scaledValue < scaledMin) scaledMin = scaledValue
+                if (scaledValue > scaledMax) scaledMax = scaledValue
+                scaledSum += scaledValue
+                
+                // Section-specific output statistics
+                when {
+                    i < RIGHT_HAND_START -> {
+                        if (scaledValue < leftHandScaledMin) leftHandScaledMin = scaledValue
+                        if (scaledValue > leftHandScaledMax) leftHandScaledMax = scaledValue
+                        leftHandScaledSum += scaledValue
+                        leftHandScaledCount++
+                    }
+                    i < FACE_START -> {
+                        if (scaledValue < rightHandScaledMin) rightHandScaledMin = scaledValue
+                        if (scaledValue > rightHandScaledMax) rightHandScaledMax = scaledValue
+                        rightHandScaledSum += scaledValue
+                        rightHandScaledCount++
+                    }
+                    else -> {
+                        if (scaledValue < faceScaledMin) faceScaledMin = scaledValue
+                        if (scaledValue > faceScaledMax) faceScaledMax = scaledValue
+                        faceScaledSum += scaledValue
+                        faceScaledCount++
+                    }
+                }
+                
+                // Collect sample transformations (first 10)
+                if (sampleTransformations.size < 10) {
+                    sampleTransformations.add("idx[$i]: %.3f -> %.3f (formula: (%.3f - 0.5) * 2.0)".format(value, scaledValue, value))
+                }
+            }
+        }
+        val scaledMean = if (scaledCount > 0) scaledSum / scaledCount else 0f
+        val scaledStd = if (scaledCount > 0) {
+            kotlin.math.sqrt(scaled.filter { it != -10.0f }.map { (it - scaledMean) * (it - scaledMean) }.average()).toFloat()
+        } else 0f
+        
+        // ALWAYS log diagnostics (using Log.e for visibility)
+        val missingSections = mutableListOf<String>()
+        if (leftHandMissing) missingSections.add("Left Hand")
+        if (rightHandMissing) missingSections.add("Right Hand")
+        if (faceMissing) missingSections.add("Face")
+        
+        Log.e(TAG, "🔍 FEATURE SCALER DIAGNOSTICS:")
+        Log.e(TAG, "   📥 INPUT STATISTICS:")
+        Log.e(TAG, "      Overall: range=[%.3f, %.3f], mean=%.3f, std=%.3f, zeros=$inputZeroCount, non-zeros=$inputNonZeroCount".format(inputMin, inputMax, inputMean, inputStd))
+        if (!leftHandMissing) {
+            val leftHandInputMean = if (leftHandInputCount > 0) leftHandInputSum / leftHandInputCount else 0f
+            Log.e(TAG, "      Left Hand: range=[%.3f, %.3f], mean=%.3f, count=$leftHandInputCount".format(leftHandInputMin, leftHandInputMax, leftHandInputMean))
+        }
+        if (!rightHandMissing) {
+            val rightHandInputMean = if (rightHandInputCount > 0) rightHandInputSum / rightHandInputCount else 0f
+            Log.e(TAG, "      Right Hand: range=[%.3f, %.3f], mean=%.3f, count=$rightHandInputCount".format(rightHandInputMin, rightHandInputMax, rightHandInputMean))
+        }
+        if (!faceMissing) {
+            val faceInputMean = if (faceInputCount > 0) faceInputSum / faceInputCount else 0f
+            Log.e(TAG, "      Face: range=[%.3f, %.3f], mean=%.3f, count=$faceInputCount".format(faceInputMin, faceInputMax, faceInputMean))
+        }
+        if (missingSections.isNotEmpty()) {
+            Log.e(TAG, "      ❌ Missing sections: ${missingSections.joinToString(", ")}")
+        }
+        Log.e(TAG, "   📤 OUTPUT STATISTICS:")
+        Log.e(TAG, "      Overall: range=[%.3f, %.3f], mean=%.3f, std=%.3f, sentinels=$sentinelCount, scaled=$scaledCount".format(scaledMin, scaledMax, scaledMean, scaledStd))
+        if (!leftHandMissing && leftHandScaledCount > 0) {
+            val leftHandScaledMean = leftHandScaledSum / leftHandScaledCount
+            Log.e(TAG, "      Left Hand: range=[%.3f, %.3f], mean=%.3f, count=$leftHandScaledCount".format(leftHandScaledMin, leftHandScaledMax, leftHandScaledMean))
+        }
+        if (!rightHandMissing && rightHandScaledCount > 0) {
+            val rightHandScaledMean = rightHandScaledSum / rightHandScaledCount
+            Log.e(TAG, "      Right Hand: range=[%.3f, %.3f], mean=%.3f, count=$rightHandScaledCount".format(rightHandScaledMin, rightHandScaledMax, rightHandScaledMean))
+        }
+        if (!faceMissing && faceScaledCount > 0) {
+            val faceScaledMean = faceScaledSum / faceScaledCount
+            Log.e(TAG, "      Face: range=[%.3f, %.3f], mean=%.3f, count=$faceScaledCount".format(faceScaledMin, faceScaledMax, faceScaledMean))
+        }
+        if (validZeroCount > 0) {
+            Log.e(TAG, "      ✅ Valid 0.0 coordinates scaled normally: $validZeroCount (not treated as missing)")
+        }
+        Log.e(TAG, "   🔄 SAMPLE TRANSFORMATIONS (first 10):")
+        sampleTransformations.forEach { Log.e(TAG, "      $it") }
+        Log.e(TAG, "   📊 First 10 input values: ${features.take(10).joinToString { "%.3f".format(it) }}")
+        Log.e(TAG, "   📊 First 10 output values: ${scaled.take(10).joinToString { "%.3f".format(it) }}")
+        
         return scaled
     }
     
     /**
-     * Get the feature dimension this scaler expects.
+     * Check if an entire section (hand or face) is all zeros.
+     * This indicates the section is missing (landmarks were null/empty).
+     * 
+     * @param features The feature array
+     * @param start Start index (inclusive)
+     * @param end End index (exclusive)
+     * @return true if entire section is zeros, false otherwise
      */
-    fun getFeatureDim(): Int = mean.size
-    
-    /**
-     * Check if scaler is properly initialized.
-     */
-    fun isValid(): Boolean = mean.isNotEmpty() && std.isNotEmpty() && mean.size == std.size
+    private fun isSectionAllZeros(features: FloatArray, start: Int, end: Int): Boolean {
+        if (start < 0 || end > features.size || start >= end) {
+            return false
+        }
+        for (i in start until end) {
+            if (features[i] != 0f) {
+                return false
+            }
+        }
+        return true
+    }
 }
-

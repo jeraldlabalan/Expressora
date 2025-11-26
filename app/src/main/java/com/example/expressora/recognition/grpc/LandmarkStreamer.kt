@@ -182,14 +182,33 @@ class LandmarkStreamer(
             // Create response observer for RecognitionEvent
             val responseObserver = object : StreamObserver<RecognitionEvent> {
                 override fun onNext(event: RecognitionEvent) {
-                    Log.i(TAG, "📥 Received recognition event from server: type=${event.type}, label='${event.label}', confidence=${event.confidence}")
+                    Log.i(TAG, "📥 ========== RECOGNITION EVENT FROM SERVER ==========")
+                    Log.i(TAG, "   Event type: ${event.type}")
+                    Log.i(TAG, "   Label: '${event.label}'")
+                    Log.i(TAG, "   Confidence: ${event.confidence} (${(event.confidence * 100).toInt()}%)")
+                    
+                    if (event.type == RecognitionEvent.Type.GLOSS) {
+                        Log.i(TAG, "   ✅ GLOSS event - will be processed by RecognitionViewModel")
+                        Log.i(TAG, "   Server has validated this gloss (multi-frame validation)")
+                    }
+                    
+                    Log.i(TAG, "   Emitting event to recognitionEvents flow...")
                     scope.launch {
                         _recognitionEvents.emit(event)
+                        Log.i(TAG, "   ✅ Event emitted to flow")
                     }
                 }
                 
                 override fun onError(t: Throwable) {
-                    Log.e(TAG, "gRPC stream error: ${t.message}", t)
+                    Log.e(TAG, "❌ ========== gRPC STREAM ERROR ==========")
+                    Log.e(TAG, "   Error type: ${t.javaClass.simpleName}")
+                    Log.e(TAG, "   Error message: ${t.message}")
+                    Log.e(TAG, "   Server: $serverHost:$serverPort")
+                    Log.e(TAG, "   Channel state: ${channel?.getState(false)}")
+                    Log.e(TAG, "   isConnected: ${isConnected.get()}")
+                    Log.e(TAG, "   isConnecting: ${isConnecting.get()}")
+                    Log.e(TAG, "   Stack trace: ${t.stackTrace.take(10).joinToString("\n   ")}")
+                    Log.e(TAG, "❌ ========================================")
                     isConnected.set(false)
                     isConnecting.set(false)
                     
@@ -275,7 +294,18 @@ class LandmarkStreamer(
             
             Log.i(TAG, "🎉 ✓ Connected to gRPC server successfully")
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to connect to gRPC server: ${e.message}", e)
+            Log.e(TAG, "❌ ========== gRPC CONNECTION FAILED ==========")
+            Log.e(TAG, "   Error type: ${e.javaClass.simpleName}")
+            Log.e(TAG, "   Error message: ${e.message}")
+            Log.e(TAG, "   Server: $serverHost:$serverPort")
+            Log.e(TAG, "   Channel state: ${channel?.getState(false)}")
+            Log.e(TAG, "   Stack trace: ${e.stackTrace.take(10).joinToString("\n   ")}")
+            Log.e(TAG, "   Possible causes:")
+            Log.e(TAG, "     - Server is not running")
+            Log.e(TAG, "     - Network connectivity issue")
+            Log.e(TAG, "     - Firewall blocking connection")
+            Log.e(TAG, "     - Wrong server address/port")
+            Log.e(TAG, "❌ ===========================================")
             isConnecting.set(false)
             scope.launch {
                 _connectionState.emit(ConnectionState.ERROR)
@@ -406,11 +436,31 @@ class LandmarkStreamer(
             Log.i(TAG, "📡 Calling blocking stub.translateSequence()...")
             val startTime = System.currentTimeMillis()
             // Use withContext to ensure blocking call runs on IO dispatcher
-            val result = withContext(Dispatchers.IO) {
-                stub.translateSequence(request)
+            // Set a deadline on the blocking stub call (30 seconds) to match the coroutine timeout
+            val result = try {
+                withContext(Dispatchers.IO) {
+                    Log.d(TAG, "🔄 Executing blocking RPC call on IO thread...")
+                    // Create a stub with deadline for this specific call (30 seconds)
+                    val deadlineStub = blockingStub!!
+                        .withDeadlineAfter(30, TimeUnit.SECONDS)
+                    val rpcResult = deadlineStub.translateSequence(request)
+                    Log.d(TAG, "✅ Blocking RPC call returned successfully")
+                    rpcResult
+                }
+            } catch (e: Exception) {
+                val duration = System.currentTimeMillis() - startTime
+                Log.e(TAG, "❌ Blocking RPC call failed after ${duration}ms: ${e.message}", e)
+                Log.e(TAG, "📊 Exception type: ${e.javaClass.simpleName}")
+                Log.e(TAG, "📊 Exception details: ${e.stackTraceToString()}")
+                throw e
             }
             val duration = System.currentTimeMillis() - startTime
             Log.i(TAG, "⏱️ Blocking call completed in ${duration}ms")
+            
+            if (result == null) {
+                Log.e(TAG, "❌ Translation result is null!")
+                throw IllegalStateException("Translation result is null")
+            }
             
             Log.i(TAG, "✅ Translation result received: '${result.sentence}' (source: ${result.source})")
             result

@@ -68,7 +68,20 @@ import com.example.expressora.dashboard.user.community_space.CommunitySpaceActiv
 import com.example.expressora.dashboard.user.quiz.QuizActivity
 import com.example.expressora.dashboard.user.translation.TranslationActivity
 import com.example.expressora.ui.theme.InterFontFamily
+import com.google.mediapipe.tasks.components.containers.NormalizedLandmark
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import androidx.camera.core.ImageAnalysis
+import com.example.expressora.recognition.grpc.LandmarkStreamer
+import com.example.expressora.recognition.di.RecognitionProvider
+import com.example.expressora.recognition.mediapipe.HolisticLandmarkerEngine
+import com.example.expressora.recognition.view.HolisticLandmarkOverlay
+import com.example.expressora.recognition.camera.CameraBitmapAnalyzer
+import com.example.expressora.grpc.RecognitionEvent
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.filter
 
 class LearnActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -135,8 +148,12 @@ fun LearnApp() {
                                 R.drawable.expressora_logo,
                                 R.drawable.camera_preview,
                             ),
-                            onTryItOut = {
+                            tryItems = listOf("A", "B", "C"), // TODO: Get from actual lesson data
+                            onTryItOut = { tryItems ->
                                 if (!completedLessons.contains(title)) completedLessons.add(title)
+                                navController.currentBackStackEntry?.savedStateHandle?.set(
+                                    "tryItems", tryItems
+                                )
                                 navController.navigate("detection")
                             })
                     }
@@ -145,7 +162,11 @@ fun LearnApp() {
 
                 composable("detection") {
                     currentScreen = "detection"
+                    val tryItems = navController.previousBackStackEntry?.savedStateHandle?.get<List<String>>(
+                        "tryItems"
+                    ) ?: listOf("A", "B", "C") // Default fallback
                     DetectionScreen(
+                        expectedGlosses = tryItems,
                         onDetectionFinished = { navController.navigate("completion") })
                 }
 
@@ -249,7 +270,8 @@ fun LessonDetailScreen(
     lessonTitle: String,
     lessonDescription: String,
     mediaAttachments: List<Int>,
-    onTryItOut: () -> Unit
+    tryItems: List<String>,
+    onTryItOut: (List<String>) -> Unit
 ) {
     val scrollState = rememberScrollState()
     var selectedImage by remember { mutableStateOf<Int?>(null) }
@@ -322,7 +344,7 @@ fun LessonDetailScreen(
             }
 
             Button(
-                onClick = onTryItOut,
+                onClick = { onTryItOut(tryItems) },
                 modifier = Modifier
                     .align(Alignment.CenterHorizontally)
                     .width(150.dp)
@@ -367,17 +389,136 @@ fun LessonDetailScreen(
 
 @Composable
 fun DetectionScreen(
+    expectedGlosses: List<String>,
     onDetectionFinished: () -> Unit
 ) {
     val context = LocalContext.current
-    var showCheck by remember { mutableStateOf(false) }
-    var autoFinishTriggered by remember { mutableStateOf(false) }
-    var useFrontCamera by remember { mutableStateOf(false) }
-
     val lifecycleOwner = context as ComponentActivity
     val previewView = remember { PreviewView(context) }
+    
+    var useFrontCamera by remember { mutableStateOf(true) }
+    var currentGlossIndex by remember { mutableStateOf(0) }
+    var showCheck by remember { mutableStateOf(false) }
+    var recognitionError by remember { mutableStateOf<String?>(null) }
+    var holisticEngine by remember { mutableStateOf<HolisticLandmarkerEngine?>(null) }
+    var landmarkStreamer by remember { mutableStateOf<LandmarkStreamer?>(null) }
+    var isConnected by remember { mutableStateOf(false) }
+    var cameraAnalyzer by remember { mutableStateOf<CameraBitmapAnalyzer?>(null) }
+    
+    // Landmark overlay for drawing mesh on camera preview
+    val landmarkOverlay = remember {
+        HolisticLandmarkOverlay(context)
+    }
+    
+    val currentGloss = if (currentGlossIndex < expectedGlosses.size) {
+        expectedGlosses[currentGlossIndex]
+    } else {
+        null
+    }
+    val progressText = if (expectedGlosses.isNotEmpty()) {
+        "${currentGlossIndex + 1} of ${expectedGlosses.size}"
+    } else {
+        ""
+    }
+    val isComplete = currentGlossIndex >= expectedGlosses.size
 
-    LaunchedEffect(useFrontCamera) {
+    // Initialize gRPC streamer and holistic engine
+    LaunchedEffect(Unit) {
+        withContext(Dispatchers.IO) {
+            try {
+                // Create gRPC streamer
+                val streamer = RecognitionProvider.provideStreamer(context)
+                landmarkStreamer = streamer
+                
+                // Connect to gRPC server
+                streamer.connect()
+                
+                // Initialize holistic landmarker engine (suspend function)
+                val engine = HolisticLandmarkerEngine.create(
+                    context = context,
+                    onResult = { result ->
+                        val timestampMs = System.currentTimeMillis()
+                        val (imageWidth, imageHeight) = cameraAnalyzer?.getFullImageDimensions() ?: Pair(640, 480)
+                        
+                        // Check if hands or face are detected
+                        val hasLeftHand = result.leftHandLandmarks() != null && result.leftHandLandmarks()!!.isNotEmpty()
+                        val hasRightHand = result.rightHandLandmarks() != null && result.rightHandLandmarks()!!.isNotEmpty()
+                        val hasFace = result.faceLandmarks() != null && result.faceLandmarks()!!.isNotEmpty()
+                        
+                        // Update landmark overlay (mesh) on main thread
+                        landmarkOverlay.post {
+                            if (hasLeftHand || hasRightHand || hasFace) {
+                                landmarkOverlay.setHolisticLandmarks(result, imageWidth, imageHeight, timestampMs)
+                            } else {
+                                // Clear overlay when nothing is detected
+                                landmarkOverlay.setHolisticLandmarks(null, imageWidth, imageHeight, timestampMs)
+                            }
+                        }
+                        
+                        // Send landmarks to gRPC server
+                        if (streamer.isConnected()) {
+                            streamer.sendLandmarks(result, timestampMs, imageWidth, imageHeight)
+                        }
+                    },
+                    onError = { error ->
+                        // Use CoroutineScope to switch to Main thread from non-suspend callback
+                        kotlinx.coroutines.CoroutineScope(Dispatchers.Main).launch {
+                            recognitionError = "Recognition error: ${error.message}"
+                        }
+                    }
+                )
+                withContext(Dispatchers.Main) {
+                    holisticEngine = engine
+                }
+                
+                // Listen to recognition events from gRPC
+                kotlinx.coroutines.CoroutineScope(Dispatchers.Main).launch {
+                    streamer.recognitionEvents
+                        .filter { it.type == RecognitionEvent.Type.GLOSS }
+                        .collectLatest { event ->
+                            if (!isComplete && currentGloss != null) {
+                                // Check if recognized gloss matches current expected gloss (case-insensitive)
+                                val recognizedGloss = event.label.uppercase().trim()
+                                val expectedGloss = currentGloss.uppercase().trim()
+                                
+                                if (recognizedGloss == expectedGloss) {
+                                    // Correct sign detected!
+                                    showCheck = true
+                                    
+                                    // Wait a bit then move to next gloss
+                                    delay(1500)
+                                    if (currentGlossIndex < expectedGlosses.size - 1) {
+                                        currentGlossIndex++
+                                        showCheck = false
+                                    } else {
+                                        // All glosses completed
+                                        delay(1000)
+                                        onDetectionFinished()
+                                    }
+                                }
+                            }
+                        }
+                }
+                
+                // Monitor connection state
+                kotlinx.coroutines.CoroutineScope(Dispatchers.Main).launch {
+                    streamer.connectionState.collectLatest { state ->
+                        isConnected = state == LandmarkStreamer.ConnectionState.CONNECTED
+                        if (state == LandmarkStreamer.ConnectionState.ERROR) {
+                            recognitionError = "Connection error. Please check if gRPC server is running."
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                recognitionError = "Failed to initialize: ${e.message}"
+            }
+        }
+    }
+
+    // Setup camera with holistic landmarker
+    LaunchedEffect(useFrontCamera, holisticEngine) {
+        if (holisticEngine == null) return@LaunchedEffect
+        
         val cameraProviderFuture = ProcessCameraProvider.getInstance(context)
         cameraProviderFuture.addListener({
             try {
@@ -388,21 +529,40 @@ fun DetectionScreen(
                 val cameraSelector = if (useFrontCamera) CameraSelector.DEFAULT_FRONT_CAMERA
                 else CameraSelector.DEFAULT_BACK_CAMERA
 
+                // Setup ImageAnalysis with CameraBitmapAnalyzer (same as TranslationActivity)
+                val analyzer = CameraBitmapAnalyzer(
+                    onFrameProcessed = { bitmap, timestamp ->
+                        holisticEngine?.detectAsync(bitmap, timestamp)
+                    }
+                )
+                cameraAnalyzer = analyzer
+                
+                val imageAnalysis = ImageAnalysis.Builder()
+                    .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+                    .build()
+                    .also {
+                        it.setAnalyzer(ContextCompat.getMainExecutor(context), analyzer)
+                    }
+
                 cameraProvider.unbindAll()
-                cameraProvider.bindToLifecycle(lifecycleOwner, cameraSelector, cameraPreview)
+                cameraProvider.bindToLifecycle(
+                    lifecycleOwner,
+                    cameraSelector,
+                    cameraPreview,
+                    imageAnalysis
+                )
             } catch (e: Exception) {
                 e.printStackTrace()
+                recognitionError = "Camera error: ${e.message}"
             }
         }, ContextCompat.getMainExecutor(context))
     }
 
-    LaunchedEffect(Unit) {
-        delay(3000)
-        showCheck = true
-        delay(3000)
-        if (!autoFinishTriggered) {
-            autoFinishTriggered = true
-            onDetectionFinished()
+    // Cleanup on dispose
+    androidx.compose.runtime.DisposableEffect(Unit) {
+        onDispose {
+            holisticEngine?.close()
+            landmarkStreamer?.stopStreaming()
         }
     }
 
@@ -411,7 +571,14 @@ fun DetectionScreen(
             .fillMaxSize()
             .background(Color.Black)
     ) {
+        // Camera preview
         AndroidView(modifier = Modifier.fillMaxSize(), factory = { previewView })
+        
+        // Landmark overlay (mesh) on top of camera preview
+        AndroidView(
+            modifier = Modifier.fillMaxSize(),
+            factory = { landmarkOverlay }
+        )
 
         Column(
             modifier = Modifier
@@ -420,7 +587,8 @@ fun DetectionScreen(
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             IconButton(
-                onClick = { useFrontCamera = !useFrontCamera }, modifier = Modifier.size(48.dp)
+                onClick = { useFrontCamera = !useFrontCamera },
+                modifier = Modifier.size(48.dp)
             ) {
                 Icon(
                     imageVector = Icons.Filled.Camera,
@@ -432,18 +600,33 @@ fun DetectionScreen(
             Spacer(modifier = Modifier.height(8.dp))
 
             Text(
-                text = "Put your hands in front of the camera",
+                text = if (isComplete) {
+                    "All signs completed!"
+                } else {
+                    "Sign: ${currentGloss ?: "Loading..."}"
+                },
                 color = Color.White,
                 fontSize = 18.sp,
                 fontWeight = FontWeight.SemiBold,
-                textAlign = TextAlign.Center
+                textAlign = TextAlign.Center,
+                fontFamily = InterFontFamily
             )
+            
+            if (expectedGlosses.isNotEmpty()) {
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = "Progress: $progressText",
+                    color = Color.White.copy(alpha = 0.8f),
+                    fontSize = 14.sp,
+                    fontFamily = InterFontFamily
+                )
+            }
         }
 
         Card(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(140.dp)
+                .height(160.dp)
                 .align(Alignment.BottomCenter),
             shape = RoundedCornerShape(12.dp),
             colors = CardDefaults.cardColors(containerColor = Color(0xFFF8F8F8)),
@@ -457,37 +640,71 @@ fun DetectionScreen(
                 verticalArrangement = Arrangement.SpaceEvenly
             ) {
                 Text(
-                    text = "The prompt will move on to the next step once you perform the sign language correctly.",
+                    text = if (isComplete) {
+                        "Great job! You've completed all signs."
+                    } else {
+                        "Sign the word shown above. The prompt will move on once you perform it correctly."
+                    },
                     fontWeight = FontWeight.SemiBold,
-                    fontSize = 16.sp,
+                    fontSize = 14.sp,
                     color = Color.Black,
-                    textAlign = TextAlign.Justify
+                    textAlign = TextAlign.Center,
+                    fontFamily = InterFontFamily
                 )
+                
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.Center,
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Text(
-                        text = "A",
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 28.sp,
-                        color = Color.Black
-                    )
-                    if (showCheck) {
-                        Spacer(modifier = Modifier.width(8.dp))
+                    if (currentGloss != null) {
+                        Text(
+                            text = currentGloss,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 32.sp,
+                            color = Color.Black,
+                            fontFamily = InterFontFamily
+                        )
+                        if (showCheck) {
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Icon(
+                                imageVector = Icons.Filled.Check,
+                                contentDescription = "Confirm",
+                                tint = Color(0xFF4CAF50),
+                                modifier = Modifier.size(32.dp)
+                            )
+                        }
+                    } else if (isComplete) {
                         Icon(
                             imageVector = Icons.Filled.Check,
-                            contentDescription = "Confirm",
-                            tint = Color.Black,
-                            modifier = Modifier.size(28.dp)
+                            contentDescription = "Complete",
+                            tint = Color(0xFF4CAF50),
+                            modifier = Modifier.size(40.dp)
                         )
                     }
+                }
+                
+                if (!isConnected) {
+                    Text(
+                        text = "Connecting to recognition server...",
+                        fontSize = 12.sp,
+                        color = Color(0xFF666666),
+                        fontFamily = InterFontFamily
+                    )
+                } else if (recognitionError != null) {
+                    Text(
+                        text = recognitionError ?: "",
+                        fontSize = 12.sp,
+                        color = Color(0xFFE53935),
+                        fontFamily = InterFontFamily,
+                        maxLines = 2
+                    )
                 }
             }
         }
     }
 }
+
 
 @Composable
 fun LessonCompletionScreen(onNextCourse: () -> Unit) {

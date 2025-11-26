@@ -2,6 +2,7 @@ package com.example.expressora.recognition.di
 
 import android.content.Context
 import android.util.Log
+import com.example.expressora.BuildConfig
 import com.example.expressora.recognition.diagnostics.RecognitionDiagnostics
 import com.example.expressora.recognition.engine.RecognitionEngine
 import com.example.expressora.recognition.model.ModelSignature
@@ -11,23 +12,19 @@ import com.example.expressora.recognition.tflite.TfLiteRecognitionEngine
 import com.example.expressora.recognition.utils.LogUtils
 import com.example.expressora.utils.NetworkUtils
 import org.json.JSONObject
-import android.content.SharedPreferences
 
 object RecognitionProvider {
     private const val TAG = "RecognitionProvider"
     
     // FP32 model is forced - no other models are used
-    private const val FP32_MODEL = "recognition/expressora_unified_v3.tflite"
+    private const val FP32_MODEL = "recognition/expressora_unified_v19.tflite"
     
     private const val SIGNATURE_ASSET = "recognition/model_signature.json"
-    private const val LABELS_ASSET = "recognition/labels.json"
+    private const val LABELS_ASSET = "recognition/labels_v11.json"
     private const val LABELS_MAPPED_ASSET = "recognition/expressora_labels_mapped.json"
     private const val HAND_TASK_ASSET = "recognition/hand_landmarker.task"
     const val HOLISTIC_TASK_ASSET = "recognition/holistic_landmarker.task"
     
-    // Feature scaling files (required for retrained model) - Version 2
-    const val FEATURE_MEAN_ASSET = "recognition/feature_mean_v2.npy"
-    const val FEATURE_STD_ASSET = "recognition/feature_std_v2.npy"
 
     // Holistic LSTM model operates on sequences: 30 frames × 237 features per frame
     // Features per frame: Left Hand (63) + Right Hand (63) + Face (111) = 237
@@ -143,59 +140,151 @@ object RecognitionProvider {
     }
 
     fun ensureAssets(context: Context): Boolean = runCatching {
-        val model = selectModel(context)
-        context.assets.open(model).close()
-        context.assets.open(HAND_TASK_ASSET).close()
+        // Check if holistic model exists first (for holistic-only mode)
+        val holisticModelExists = runCatching { 
+            context.assets.open(HOLISTIC_TASK_ASSET).close()
+            true
+        }.getOrElse { false }
         
-        // Verify holistic model exists (required for online mode)
-        runCatching { context.assets.open(HOLISTIC_TASK_ASSET).close() }
-            .onFailure { 
-                Log.w(TAG, "Holistic model not found: $HOLISTIC_TASK_ASSET. Online mode will not work. " +
-                        "Offline mode can still use $HAND_TASK_ASSET.")
+        // If holistic model exists, TFLite model is optional (for holistic-only mode)
+        // If holistic model doesn't exist, TFLite model is required
+        if (holisticModelExists) {
+            // Holistic mode: TFLite model is optional
+            runCatching {
+                val model = selectModel(context)
+                context.assets.open(model).close()
+            }.onFailure { e ->
+                Log.d(TAG, "TFLite model not found (non-fatal for holistic mode): ${e.message}")
             }
+        } else {
+            // Non-holistic mode: TFLite model is required
+            val model = selectModel(context)
+            context.assets.open(model).close()
+        }
         
+        // Hand landmarker is only required if holistic model doesn't exist
+        if (!holisticModelExists) {
+            context.assets.open(HAND_TASK_ASSET).close()
+        } else {
+            Log.d(TAG, "Holistic model found: $HOLISTIC_TASK_ASSET. Hand landmarker not required for holistic mode.")
+        }
+        
+        // Optional assets (wrapped in runCatching)
         runCatching { context.assets.open(LABELS_ASSET).close() }
             .onFailure { Log.w(TAG, "Labels JSON not found; runtime will synthesize CLASS_i.") }
         
         runCatching { context.assets.open(LABELS_MAPPED_ASSET).close() }
             .onFailure { Log.w(TAG, "Mapped labels not found; will use raw labels.") }
         
-        // Verify feature scaling files exist (required for retrained model)
-        runCatching { context.assets.open(FEATURE_MEAN_ASSET).close() }
-            .onFailure { Log.e(TAG, "CRITICAL: Feature scaling file not found: $FEATURE_MEAN_ASSET") }
+        // NOTE: Feature scaling files (mean/std) are no longer required
+        // FeatureScaler now uses hardcoded robust Min-Max scaling: (x - 0.5) * 2.0
+        // Mean/std files are deprecated and not used
         
-        runCatching { context.assets.open(FEATURE_STD_ASSET).close() }
-            .onFailure { Log.e(TAG, "CRITICAL: Feature scaling file not found: $FEATURE_STD_ASSET") }
+        // Model signature is optional
+        runCatching { 
+            getModelSignature(context)
+        }.onFailure { e ->
+            Log.w(TAG, "Model signature parsing failed (non-fatal): ${e.message}")
+        }
         
-        getModelSignature(context)
-        
+        // Return true if holistic model exists OR all required assets exist
         true
     }.getOrElse { false }
 
-    fun provideEngine(context: Context): RecognitionEngine {
-        Log.d(TAG, "Providing RecognitionEngine")
+    fun provideEngine(context: Context): RecognitionEngine? {
+        Log.i(TAG, "🔍 ========== PROVIDING RECOGNITION ENGINE ==========")
         val model = selectModel(context)
-        val signature = getModelSignature(context)
+        Log.i(TAG, "📁 Selected model path: '$model'")
         
-        Log.d(TAG, "Creating TfLiteRecognitionEngine: model='$model', featureDim=$FEATURE_DIM, " +
-                "hasMultiHead=${signature?.isMultiHead()}")
+        // Check if model file exists with detailed error reporting
+        val modelExists = runCatching {
+            Log.d(TAG, "🔍 Attempting to open model file: '$model'")
+            val assetFileDescriptor = context.assets.openFd(model)
+            val fileSize = assetFileDescriptor.length
+            assetFileDescriptor.close()
+            Log.i(TAG, "✅ Model file found: '$model' (size: $fileSize bytes)")
+            true
+        }.getOrElse { error ->
+            Log.e(TAG, "❌ Model file check FAILED: '$model'")
+            Log.e(TAG, "   Error type: ${error.javaClass.simpleName}")
+            Log.e(TAG, "   Error message: ${error.message}")
+            Log.e(TAG, "   Stack trace: ${error.stackTrace.take(5).joinToString("\n   ")}")
+            
+            // Try to list available assets in recognition folder for debugging
+            try {
+                val assetList = context.assets.list("recognition")
+                Log.e(TAG, "   Available files in 'recognition' folder: ${assetList?.joinToString(", ") ?: "null"}")
+            } catch (e: Exception) {
+                Log.e(TAG, "   Could not list recognition assets: ${e.message}")
+            }
+            false
+        }
+        
+        if (!modelExists) {
+            Log.e(TAG, "⚠️ TFLite model not found: $model. RecognitionEngine will not be created (holistic-only mode)")
+            Log.e(TAG, "   This means offline recognition will not work. App will fall back to online mode.")
+            return null
+        }
+        
+        // Log model file details
+        try {
+            val afd = context.assets.openFd(model)
+            val fileSize = afd.length
+            afd.close()
+            Log.i(TAG, "📦 Model file details:")
+            Log.i(TAG, "   - Path: $model")
+            Log.i(TAG, "   - Size: $fileSize bytes (${fileSize / 1024 / 1024} MB)")
+            Log.i(TAG, "   - Expected: expressora_unified_v19.tflite (FP32)")
+            if (model.contains("v19")) {
+                Log.i(TAG, "   ✅ Model version confirmed: v19")
+            } else {
+                Log.w(TAG, "   ⚠️ Model version mismatch: expected v19, got: $model")
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "   Could not read model file details: ${e.message}")
+        }
+        
+        Log.i(TAG, "📋 Loading model signature...")
+        val signature = getModelSignature(context)
+        if (signature != null) {
+            Log.i(TAG, "✅ Model signature loaded: ${if (signature.isMultiHead()) "multi-head" else "single-head"}")
+        } else {
+            Log.w(TAG, "⚠️ Model signature not available (will use defaults)")
+        }
+        
+        Log.i(TAG, "🔧 Creating TfLiteRecognitionEngine with parameters:")
+        Log.i(TAG, "   - model: '$model'")
+        Log.i(TAG, "   - featureDim: $FEATURE_DIM")
+        Log.i(TAG, "   - hasMultiHead: ${signature?.isMultiHead() ?: false}")
+        Log.i(TAG, "   - labelAsset: '$LABELS_ASSET'")
+        Log.i(TAG, "   - labelMappedAsset: '$LABELS_MAPPED_ASSET'")
         
         // CRITICAL: Verify model is FP32 before creating engine
         if (model != FP32_MODEL) {
             Log.e(TAG, "❌ CRITICAL ERROR: Wrong model being loaded! Expected '$FP32_MODEL' (FP32), got: '$model'")
         } else {
-            Log.i(TAG, "✅ Model verified: FP32 model '$model' will be used (v3)")
+            Log.i(TAG, "✅ Model verified: FP32 model '$model' will be used (v19)")
         }
         
-        return TfLiteRecognitionEngine(
-            context = context.applicationContext,
-            modelAsset = model,
-            labelAsset = LABELS_ASSET,
-            labelMappedAsset = LABELS_MAPPED_ASSET,
-            featureDim = FEATURE_DIM,
-            modelSignature = signature
-        ).also {
-            Log.i(TAG, "✅ RecognitionEngine created successfully with model: '$model'")
+        return try {
+            TfLiteRecognitionEngine(
+                context = context.applicationContext,
+                modelAsset = model,
+                labelAsset = LABELS_ASSET,
+                labelMappedAsset = LABELS_MAPPED_ASSET,
+                featureDim = FEATURE_DIM,
+                modelSignature = signature
+            ).also {
+                Log.i(TAG, "✅ RecognitionEngine created successfully with model: '$model'")
+                Log.i(TAG, "🔍 ========== ENGINE PROVISION COMPLETE ==========")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ CRITICAL: Failed to create TfLiteRecognitionEngine!", e)
+            Log.e(TAG, "   Error type: ${e.javaClass.simpleName}")
+            Log.e(TAG, "   Error message: ${e.message}")
+            Log.e(TAG, "   Stack trace: ${e.stackTrace.take(10).joinToString("\n   ")}")
+            Log.e(TAG, "🔍 ========== ENGINE PROVISION FAILED ==========")
+            null
         }
     }
 
@@ -209,13 +298,21 @@ object RecognitionProvider {
         val streamer = provideStreamer(context)
         val engine = provideEngine(context)
         
+        if (engine == null) {
+            Log.w(TAG, "⚠️ RecognitionEngine is null (holistic-only mode). Recognition will not work, but holistic detection will.")
+        }
+        
         Log.d(TAG, "Creating ViewModelFactory with both engine and streamer (runtime switching enabled)")
         
+        // Default to offline mode for TFLite model testing
+        // User can toggle to online mode via UI if needed
+        val defaultMode = false  // Always start in offline mode
+        
         return RecognitionViewModelFactory(
-            engine = engine,  // Always provide TFLite engine
+            engine = engine,  // May be null if TFLite model is missing (holistic-only mode)
             streamer = streamer,  // Always provide gRPC streamer
             context = context,
-            useOnlineMode = true  // Default start state (Online Mode)
+            useOnlineMode = defaultMode  // Default: Offline (for TFLite testing)
         )
     }
     

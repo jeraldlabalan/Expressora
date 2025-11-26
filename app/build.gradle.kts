@@ -88,6 +88,13 @@ android {
     }
 
     buildTypes {
+        debug {
+            // Optimize debug builds for faster deployment
+            isMinifyEnabled = false
+            isShrinkResources = false
+            // Use split APKs for faster installation on physical devices
+            isDebuggable = true
+        }
         release {
             isMinifyEnabled = true
             isShrinkResources = true
@@ -111,6 +118,10 @@ android {
     packaging {
         jniLibs {
             useLegacyPackaging = false
+        }
+        // Optimize packaging for faster deployment
+        resources {
+            excludes += "/META-INF/{AL2.0,LGPL2.1}"
         }
     }
     compileOptions {
@@ -504,8 +515,13 @@ tasks.register("diagnoseRecognitionAssets") {
 
 // Task to explicitly delete old model file (expressora_unified.tflite) if it exists
 // This runs BEFORE build to prevent the old file from interfering
-tasks.register("cleanupOldModel") {
-    doLast {
+abstract class CleanupOldModelTask : DefaultTask() {
+    @get:Input
+    abstract val assetsDirectory: Property<String>
+    
+    @TaskAction
+    fun run() {
+        val assetsDir = File(assetsDirectory.get())
         val oldModelFile = File(assetsDir, "expressora_unified.tflite")
         val oldModelFp16 = File(assetsDir, "expressora_unified_fp16.tflite")
         val oldModelInt8 = File(assetsDir, "expressora_unified_int8.tflite")
@@ -535,32 +551,53 @@ tasks.register("cleanupOldModel") {
     }
 }
 
-tasks.register("copyUnifiedRecognitionArtifacts") {
-    // DISABLED: Model file auto-copy is disabled - models are manually managed
-    // This prevents the build from overwriting expressora_unified_v2.tflite with old files
-    dependsOn("cleanupOldModel") // Ensure old file is deleted first
+tasks.register<CleanupOldModelTask>("cleanupOldModel") {
+    group = "build setup"
+    description = "Deletes old model files to prevent interference"
+    assetsDirectory.set(File(project.projectDir, "src/main/assets").absolutePath)
+}
+
+abstract class CopyUnifiedRecognitionArtifactsTask : DefaultTask() {
+    @get:Input
+    abstract val assetsDirectory: Property<String>
     
-    doLast {
+    @get:Input
+    abstract val modelFileName: Property<String>
+    
+    @TaskAction
+    fun run() {
+        val assetsDir = File(assetsDirectory.get())
+        val modelFile = File(assetsDir, modelFileName.get())
+        val projectDir = File(assetsDirectory.get()).parentFile.parentFile
+        
         // CRITICAL: Delete old model file if it somehow reappeared
         val oldModelFile = File(assetsDir, "expressora_unified.tflite")
         if (oldModelFile.exists()) {
             oldModelFile.delete()
-            logger.warn("⚠️ Found and deleted old model file: ${oldModelFile.relativeToOrSelf(project.projectDir)}")
+            logger.warn("⚠️ Found and deleted old model file: ${oldModelFile.relativeToOrSelf(projectDir)}")
         }
         
         // NO-OP: Model files are manually managed, not auto-copied
         logger.info("Model file auto-copy disabled - using manually managed files in assets/")
         
-        // Just verify the v2 model file exists (won't create or overwrite)
-        if (unifiedModelOut.exists()) {
-            logger.lifecycle("✅ Model file verified: ${unifiedModelOut.relativeToOrSelf(project.projectDir)}")
+        // Just verify the model file exists (won't create or overwrite)
+        if (modelFile.exists()) {
+            logger.lifecycle("✅ Model file verified: ${modelFile.relativeToOrSelf(projectDir)}")
         } else {
-            logger.warn("⚠️ Model file not found: ${unifiedModelOut.relativeToOrSelf(project.projectDir)} - please add it manually to assets")
+            logger.warn("⚠️ Model file not found: ${modelFile.relativeToOrSelf(projectDir)} - please add it manually to assets")
         }
 
         // Labels JSON (expressora_labels.json) is now manually managed - no auto-copy
         logger.info("Labels JSON auto-copy disabled - using manually managed files in assets/")
     }
+}
+
+tasks.register<CopyUnifiedRecognitionArtifactsTask>("copyUnifiedRecognitionArtifacts") {
+    group = "build setup"
+    description = "Verifies unified recognition artifacts are present (auto-copy disabled)"
+    dependsOn("cleanupOldModel") // Ensure old file is deleted first
+    assetsDirectory.set(File(project.projectDir, "src/main/assets").absolutePath)
+    modelFileName.set("expressora_unified_v2.tflite")
 }
 
 // Removed dependency on generateLabelsJson task
