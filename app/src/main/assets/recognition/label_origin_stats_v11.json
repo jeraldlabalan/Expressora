@@ -1,0 +1,1297 @@
+{
+  "play": {
+    "asl": 2,
+    "fsl": 0,
+    "other": 0
+  },
+  "read": {
+    "asl": 1,
+    "fsl": 0,
+    "other": 0
+  },
+  "run": {
+    "asl": 1,
+    "fsl": 0,
+    "other": 0
+  },
+  "sleep": {
+    "asl": 1,
+    "fsl": 0,
+    "other": 0
+  },
+  "walk": {
+    "asl": 1,
+    "fsl": 0,
+    "other": 0
+  },
+  "write": {
+    "asl": 1,
+    "fsl": 0,
+    "other": 0
+  },
+  "black": {
+    "asl": 2,
+    "fsl": 0,
+    "other": 0
+  },
+  "blue": {
+    "asl": 1,
+    "fsl": 0,
+    "other": 0
+  },
+  "green": {
+    "asl": 1,
+    "fsl": 0,
+    "other": 0
+  },
+  "orange": {
+    "asl": 1,
+    "fsl": 0,
+    "other": 0
+  },
+  "purple": {
+    "asl": 1,
+    "fsl": 0,
+    "other": 0
+  },
+  "red": {
+    "asl": 1,
+    "fsl": 0,
+    "other": 0
+  },
+  "white": {
+    "asl": 1,
+    "fsl": 0,
+    "other": 0
+  },
+  "yellow": {
+    "asl": 1,
+    "fsl": 0,
+    "other": 0
+  },
+  "bad": {
+    "asl": 2,
+    "fsl": 0,
+    "other": 0
+  },
+  "come": {
+    "asl": 1,
+    "fsl": 0,
+    "other": 0
+  },
+  "drink": {
+    "asl": 1,
+    "fsl": 0,
+    "other": 0
+  },
+  "eat": {
+    "asl": 1,
+    "fsl": 0,
+    "other": 0
+  },
+  "go": {
+    "asl": 1,
+    "fsl": 0,
+    "other": 0
+  },
+  "good": {
+    "asl": 1,
+    "fsl": 0,
+    "other": 0
+  },
+  "help": {
+    "asl": 1,
+    "fsl": 0,
+    "other": 0
+  },
+  "iloveyou": {
+    "asl": 1,
+    "fsl": 0,
+    "other": 0
+  },
+  "like": {
+    "asl": 1,
+    "fsl": 0,
+    "other": 0
+  },
+  "need": {
+    "asl": 1,
+    "fsl": 0,
+    "other": 0
+  },
+  "no": {
+    "asl": 2,
+    "fsl": 0,
+    "other": 0
+  },
+  "stop": {
+    "asl": 1,
+    "fsl": 0,
+    "other": 0
+  },
+  "want": {
+    "asl": 1,
+    "fsl": 0,
+    "other": 0
+  },
+  "yes": {
+    "asl": 2,
+    "fsl": 0,
+    "other": 0
+  },
+  "angry": {
+    "asl": 3,
+    "fsl": 0,
+    "other": 0
+  },
+  "exicited": {
+    "asl": 1,
+    "fsl": 0,
+    "other": 0
+  },
+  "happy": {
+    "asl": 3,
+    "fsl": 0,
+    "other": 0
+  },
+  "sad": {
+    "asl": 2,
+    "fsl": 0,
+    "other": 0
+  },
+  "scared": {
+    "asl": 1,
+    "fsl": 0,
+    "other": 0
+  },
+  "tired": {
+    "asl": 1,
+    "fsl": 0,
+    "other": 0
+  },
+  "goodbye": {
+    "asl": 2,
+    "fsl": 0,
+    "other": 0
+  },
+  "hello": {
+    "asl": 1,
+    "fsl": 1,
+    "other": 0
+  },
+  "hey": {
+    "asl": 1,
+    "fsl": 0,
+    "other": 0
+  },
+  "nice": {
+    "asl": 1,
+    "fsl": 0,
+    "other": 0
+  },
+  "please": {
+    "asl": 1,
+    "fsl": 0,
+    "other": 0
+  },
+  "sorry": {
+    "asl": 1,
+    "fsl": 0,
+    "other": 0
+  },
+  "thankyou": {
+    "asl": 1,
+    "fsl": 0,
+    "other": 0
+  },
+  "whatsup": {
+    "asl": 1,
+    "fsl": 0,
+    "other": 0
+  },
+  "eight": {
+    "asl": 2,
+    "fsl": 0,
+    "other": 0
+  },
+  "five": {
+    "asl": 1,
+    "fsl": 0,
+    "other": 0
+  },
+  "four": {
+    "asl": 1,
+    "fsl": 0,
+    "other": 0
+  },
+  "nine": {
+    "asl": 1,
+    "fsl": 0,
+    "other": 0
+  },
+  "one": {
+    "asl": 1,
+    "fsl": 0,
+    "other": 0
+  },
+  "seven": {
+    "asl": 1,
+    "fsl": 0,
+    "other": 0
+  },
+  "six": {
+    "asl": 1,
+    "fsl": 0,
+    "other": 0
+  },
+  "ten": {
+    "asl": 1,
+    "fsl": 0,
+    "other": 0
+  },
+  "three": {
+    "asl": 1,
+    "fsl": 0,
+    "other": 0
+  },
+  "two": {
+    "asl": 1,
+    "fsl": 0,
+    "other": 0
+  },
+  "book": {
+    "asl": 2,
+    "fsl": 0,
+    "other": 0
+  },
+  "car": {
+    "asl": 1,
+    "fsl": 0,
+    "other": 0
+  },
+  "food": {
+    "asl": 1,
+    "fsl": 0,
+    "other": 0
+  },
+  "house": {
+    "asl": 1,
+    "fsl": 0,
+    "other": 0
+  },
+  "phone": {
+    "asl": 1,
+    "fsl": 0,
+    "other": 0
+  },
+  "thing": {
+    "asl": 1,
+    "fsl": 0,
+    "other": 0
+  },
+  "water": {
+    "asl": 1,
+    "fsl": 0,
+    "other": 0
+  },
+  "family": {
+    "asl": 2,
+    "fsl": 0,
+    "other": 0
+  },
+  "father": {
+    "asl": 1,
+    "fsl": 0,
+    "other": 0
+  },
+  "friend": {
+    "asl": 1,
+    "fsl": 0,
+    "other": 0
+  },
+  "he": {
+    "asl": 1,
+    "fsl": 0,
+    "other": 0
+  },
+  "me": {
+    "asl": 1,
+    "fsl": 0,
+    "other": 0
+  },
+  "mother": {
+    "asl": 1,
+    "fsl": 0,
+    "other": 0
+  },
+  "she": {
+    "asl": 1,
+    "fsl": 0,
+    "other": 0
+  },
+  "they": {
+    "asl": 1,
+    "fsl": 0,
+    "other": 0
+  },
+  "we": {
+    "asl": 1,
+    "fsl": 0,
+    "other": 0
+  },
+  "you": {
+    "asl": 1,
+    "fsl": 0,
+    "other": 0
+  },
+  "farm": {
+    "asl": 2,
+    "fsl": 0,
+    "other": 0
+  },
+  "home": {
+    "asl": 1,
+    "fsl": 0,
+    "other": 0
+  },
+  "school": {
+    "asl": 1,
+    "fsl": 0,
+    "other": 0
+  },
+  "store": {
+    "asl": 1,
+    "fsl": 0,
+    "other": 0
+  },
+  "work": {
+    "asl": 1,
+    "fsl": 0,
+    "other": 0
+  },
+  "how": {
+    "asl": 3,
+    "fsl": 0,
+    "other": 0
+  },
+  "what": {
+    "asl": 2,
+    "fsl": 0,
+    "other": 0
+  },
+  "when": {
+    "asl": 1,
+    "fsl": 0,
+    "other": 0
+  },
+  "where": {
+    "asl": 2,
+    "fsl": 0,
+    "other": 0
+  },
+  "who": {
+    "asl": 2,
+    "fsl": 0,
+    "other": 0
+  },
+  "why": {
+    "asl": 2,
+    "fsl": 0,
+    "other": 0
+  },
+  "afternoon": {
+    "asl": 2,
+    "fsl": 0,
+    "other": 0
+  },
+  "morning": {
+    "asl": 1,
+    "fsl": 0,
+    "other": 0
+  },
+  "night": {
+    "asl": 1,
+    "fsl": 0,
+    "other": 0
+  },
+  "today": {
+    "asl": 1,
+    "fsl": 0,
+    "other": 0
+  },
+  "tommorow": {
+    "asl": 1,
+    "fsl": 0,
+    "other": 0
+  },
+  "yesterday": {
+    "asl": 1,
+    "fsl": 0,
+    "other": 0
+  },
+  "basahin": {
+    "asl": 0,
+    "fsl": 2,
+    "other": 0
+  },
+  "lakad": {
+    "asl": 0,
+    "fsl": 1,
+    "other": 0
+  },
+  "laro": {
+    "asl": 0,
+    "fsl": 1,
+    "other": 0
+  },
+  "magsulat": {
+    "asl": 0,
+    "fsl": 1,
+    "other": 0
+  },
+  "tulog": {
+    "asl": 0,
+    "fsl": 1,
+    "other": 0
+  },
+  "tumakbo": {
+    "asl": 0,
+    "fsl": 1,
+    "other": 0
+  },
+  "asul": {
+    "asl": 0,
+    "fsl": 2,
+    "other": 0
+  },
+  "berde": {
+    "asl": 0,
+    "fsl": 1,
+    "other": 0
+  },
+  "dilaw": {
+    "asl": 0,
+    "fsl": 1,
+    "other": 0
+  },
+  "itim": {
+    "asl": 0,
+    "fsl": 1,
+    "other": 0
+  },
+  "kahel": {
+    "asl": 0,
+    "fsl": 1,
+    "other": 0
+  },
+  "lila": {
+    "asl": 0,
+    "fsl": 1,
+    "other": 0
+  },
+  "pula": {
+    "asl": 0,
+    "fsl": 1,
+    "other": 0
+  },
+  "puti": {
+    "asl": 0,
+    "fsl": 1,
+    "other": 0
+  },
+  "gusto": {
+    "asl": 0,
+    "fsl": 2,
+    "other": 0
+  },
+  "halika": {
+    "asl": 0,
+    "fsl": 1,
+    "other": 0
+  },
+  "hindi": {
+    "asl": 0,
+    "fsl": 3,
+    "other": 0
+  },
+  "inumin": {
+    "asl": 0,
+    "fsl": 1,
+    "other": 0
+  },
+  "kailangan": {
+    "asl": 0,
+    "fsl": 1,
+    "other": 0
+  },
+  "katulad": {
+    "asl": 0,
+    "fsl": 1,
+    "other": 0
+  },
+  "kumain": {
+    "asl": 0,
+    "fsl": 1,
+    "other": 0
+  },
+  "mabuti": {
+    "asl": 0,
+    "fsl": 1,
+    "other": 0
+  },
+  "mahal_kita": {
+    "asl": 0,
+    "fsl": 1,
+    "other": 0
+  },
+  "masama": {
+    "asl": 0,
+    "fsl": 1,
+    "other": 0
+  },
+  "oo": {
+    "asl": 0,
+    "fsl": 2,
+    "other": 0
+  },
+  "pumunta": {
+    "asl": 0,
+    "fsl": 1,
+    "other": 0
+  },
+  "tigil": {
+    "asl": 0,
+    "fsl": 1,
+    "other": 0
+  },
+  "tulong": {
+    "asl": 0,
+    "fsl": 1,
+    "other": 0
+  },
+  "galit": {
+    "asl": 0,
+    "fsl": 3,
+    "other": 0
+  },
+  "malungkot": {
+    "asl": 0,
+    "fsl": 2,
+    "other": 0
+  },
+  "masaya": {
+    "asl": 0,
+    "fsl": 2,
+    "other": 0
+  },
+  "nasasabik": {
+    "asl": 0,
+    "fsl": 1,
+    "other": 0
+  },
+  "pagod": {
+    "asl": 0,
+    "fsl": 1,
+    "other": 0
+  },
+  "takot": {
+    "asl": 0,
+    "fsl": 2,
+    "other": 0
+  },
+  "anong_balita": {
+    "asl": 0,
+    "fsl": 2,
+    "other": 0
+  },
+  "hoy": {
+    "asl": 0,
+    "fsl": 1,
+    "other": 0
+  },
+  "nays": {
+    "asl": 0,
+    "fsl": 1,
+    "other": 0
+  },
+  "paalam": {
+    "asl": 0,
+    "fsl": 1,
+    "other": 0
+  },
+  "pakiusap": {
+    "asl": 0,
+    "fsl": 1,
+    "other": 0
+  },
+  "patawad": {
+    "asl": 0,
+    "fsl": 1,
+    "other": 0
+  },
+  "salamat": {
+    "asl": 0,
+    "fsl": 1,
+    "other": 0
+  },
+  "anim": {
+    "asl": 0,
+    "fsl": 2,
+    "other": 0
+  },
+  "apat": {
+    "asl": 0,
+    "fsl": 1,
+    "other": 0
+  },
+  "dalawa": {
+    "asl": 0,
+    "fsl": 1,
+    "other": 0
+  },
+  "isa": {
+    "asl": 0,
+    "fsl": 1,
+    "other": 0
+  },
+  "lima": {
+    "asl": 0,
+    "fsl": 1,
+    "other": 0
+  },
+  "pito": {
+    "asl": 0,
+    "fsl": 1,
+    "other": 0
+  },
+  "sampu": {
+    "asl": 0,
+    "fsl": 1,
+    "other": 0
+  },
+  "siyam": {
+    "asl": 0,
+    "fsl": 1,
+    "other": 0
+  },
+  "tatlo": {
+    "asl": 0,
+    "fsl": 1,
+    "other": 0
+  },
+  "walo": {
+    "asl": 0,
+    "fsl": 1,
+    "other": 0
+  },
+  "bahay": {
+    "asl": 0,
+    "fsl": 2,
+    "other": 0
+  },
+  "gamit": {
+    "asl": 0,
+    "fsl": 1,
+    "other": 0
+  },
+  "kotse": {
+    "asl": 0,
+    "fsl": 1,
+    "other": 0
+  },
+  "libro": {
+    "asl": 0,
+    "fsl": 1,
+    "other": 0
+  },
+  "pagkain": {
+    "asl": 0,
+    "fsl": 1,
+    "other": 0
+  },
+  "telopono": {
+    "asl": 0,
+    "fsl": 1,
+    "other": 0
+  },
+  "tubig": {
+    "asl": 0,
+    "fsl": 1,
+    "other": 0
+  },
+  "ako": {
+    "asl": 0,
+    "fsl": 2,
+    "other": 0
+  },
+  "ama": {
+    "asl": 0,
+    "fsl": 1,
+    "other": 0
+  },
+  "ikaw": {
+    "asl": 0,
+    "fsl": 1,
+    "other": 0
+  },
+  "ina": {
+    "asl": 0,
+    "fsl": 1,
+    "other": 0
+  },
+  "kaibigan": {
+    "asl": 0,
+    "fsl": 1,
+    "other": 0
+  },
+  "pamilya": {
+    "asl": 0,
+    "fsl": 1,
+    "other": 0
+  },
+  "sila": {
+    "asl": 0,
+    "fsl": 1,
+    "other": 0
+  },
+  "siya(babae)": {
+    "asl": 0,
+    "fsl": 1,
+    "other": 0
+  },
+  "siya(lalake)": {
+    "asl": 0,
+    "fsl": 1,
+    "other": 0
+  },
+  "tayo": {
+    "asl": 0,
+    "fsl": 1,
+    "other": 0
+  },
+  "bukid": {
+    "asl": 0,
+    "fsl": 2,
+    "other": 0
+  },
+  "paaralan": {
+    "asl": 0,
+    "fsl": 1,
+    "other": 0
+  },
+  "tahanan": {
+    "asl": 0,
+    "fsl": 1,
+    "other": 0
+  },
+  "tindahan": {
+    "asl": 0,
+    "fsl": 1,
+    "other": 0
+  },
+  "trabaho": {
+    "asl": 0,
+    "fsl": 1,
+    "other": 0
+  },
+  "ano": {
+    "asl": 0,
+    "fsl": 3,
+    "other": 0
+  },
+  "bakit": {
+    "asl": 0,
+    "fsl": 2,
+    "other": 0
+  },
+  "kailan": {
+    "asl": 0,
+    "fsl": 1,
+    "other": 0
+  },
+  "paano": {
+    "asl": 0,
+    "fsl": 2,
+    "other": 0
+  },
+  "saan": {
+    "asl": 0,
+    "fsl": 2,
+    "other": 0
+  },
+  "sino": {
+    "asl": 0,
+    "fsl": 2,
+    "other": 0
+  },
+  "bukas": {
+    "asl": 0,
+    "fsl": 2,
+    "other": 0
+  },
+  "gabi": {
+    "asl": 0,
+    "fsl": 1,
+    "other": 0
+  },
+  "hapon": {
+    "asl": 0,
+    "fsl": 1,
+    "other": 0
+  },
+  "kahapon": {
+    "asl": 0,
+    "fsl": 1,
+    "other": 0
+  },
+  "ngayon": {
+    "asl": 0,
+    "fsl": 1,
+    "other": 0
+  },
+  "umaga": {
+    "asl": 0,
+    "fsl": 1,
+    "other": 0
+  },
+  "smile": {
+    "asl": 3,
+    "fsl": 0,
+    "other": 0
+  },
+  "confused": {
+    "asl": 2,
+    "fsl": 0,
+    "other": 0
+  },
+  "listening": {
+    "asl": 1,
+    "fsl": 0,
+    "other": 0
+  },
+  "nod": {
+    "asl": 1,
+    "fsl": 0,
+    "other": 0
+  },
+  "disappointed": {
+    "asl": 1,
+    "fsl": 0,
+    "other": 0
+  },
+  "fear": {
+    "asl": 1,
+    "fsl": 0,
+    "other": 0
+  },
+  "funny": {
+    "asl": 1,
+    "fsl": 0,
+    "other": 0
+  },
+  "shame": {
+    "asl": 1,
+    "fsl": 0,
+    "other": 0
+  },
+  "shock": {
+    "asl": 1,
+    "fsl": 0,
+    "other": 0
+  },
+  "shy": {
+    "asl": 1,
+    "fsl": 0,
+    "other": 0
+  },
+  "surprise": {
+    "asl": 1,
+    "fsl": 0,
+    "other": 0
+  },
+  "turn_right": {
+    "asl": 2,
+    "fsl": 0,
+    "other": 0
+  },
+  "down": {
+    "asl": 1,
+    "fsl": 0,
+    "other": 0
+  },
+  "focus": {
+    "asl": 1,
+    "fsl": 0,
+    "other": 0
+  },
+  "turn_left": {
+    "asl": 1,
+    "fsl": 0,
+    "other": 0
+  },
+  "up": {
+    "asl": 1,
+    "fsl": 0,
+    "other": 0
+  },
+  "distance_hold": {
+    "asl": 2,
+    "fsl": 0,
+    "other": 0
+  },
+  "direction_left": {
+    "asl": 1,
+    "fsl": 0,
+    "other": 0
+  },
+  "direction_right": {
+    "asl": 1,
+    "fsl": 0,
+    "other": 0
+  },
+  "far": {
+    "asl": 1,
+    "fsl": 0,
+    "other": 0
+  },
+  "short": {
+    "asl": 1,
+    "fsl": 0,
+    "other": 0
+  },
+  "very_far": {
+    "asl": 1,
+    "fsl": 0,
+    "other": 0
+  },
+  "tall": {
+    "asl": 2,
+    "fsl": 0,
+    "other": 0
+  },
+  "big": {
+    "asl": 1,
+    "fsl": 0,
+    "other": 0
+  },
+  "brief": {
+    "asl": 1,
+    "fsl": 0,
+    "other": 0
+  },
+  "huge": {
+    "asl": 1,
+    "fsl": 0,
+    "other": 0
+  },
+  "wide": {
+    "asl": 1,
+    "fsl": 0,
+    "other": 0
+  },
+  "quick": {
+    "asl": 3,
+    "fsl": 0,
+    "other": 0
+  },
+  "close": {
+    "asl": 1,
+    "fsl": 0,
+    "other": 0
+  },
+  "effort": {
+    "asl": 1,
+    "fsl": 0,
+    "other": 0
+  },
+  "strained": {
+    "asl": 1,
+    "fsl": 0,
+    "other": 0
+  },
+  "sustained": {
+    "asl": 2,
+    "fsl": 0,
+    "other": 0
+  },
+  "very_close": {
+    "asl": 1,
+    "fsl": 0,
+    "other": 0
+  },
+  "repeated": {
+    "asl": 2,
+    "fsl": 0,
+    "other": 0
+  },
+  "loose": {
+    "asl": 1,
+    "fsl": 0,
+    "other": 0
+  },
+  "normal": {
+    "asl": 1,
+    "fsl": 1,
+    "other": 0
+  },
+  "tight": {
+    "asl": 1,
+    "fsl": 0,
+    "other": 0
+  },
+  "small": {
+    "asl": 2,
+    "fsl": 0,
+    "other": 0
+  },
+  "fast": {
+    "asl": 1,
+    "fsl": 0,
+    "other": 0
+  },
+  "slow": {
+    "asl": 1,
+    "fsl": 0,
+    "other": 0
+  },
+  "thin": {
+    "asl": 1,
+    "fsl": 0,
+    "other": 0
+  },
+  "tiny": {
+    "asl": 1,
+    "fsl": 0,
+    "other": 0
+  },
+  "negative": {
+    "asl": 2,
+    "fsl": 0,
+    "other": 0
+  },
+  "condition": {
+    "asl": 1,
+    "fsl": 0,
+    "other": 0
+  },
+  "statement": {
+    "asl": 1,
+    "fsl": 0,
+    "other": 0
+  },
+  "tango": {
+    "asl": 0,
+    "fsl": 2,
+    "other": 0
+  },
+  "nakikinig": {
+    "asl": 0,
+    "fsl": 1,
+    "other": 0
+  },
+  "nalilito": {
+    "asl": 0,
+    "fsl": 3,
+    "other": 0
+  },
+  "ngumiti": {
+    "asl": 0,
+    "fsl": 1,
+    "other": 0
+  },
+  "dismayado": {
+    "asl": 0,
+    "fsl": 1,
+    "other": 0
+  },
+  "kahihiyan": {
+    "asl": 0,
+    "fsl": 1,
+    "other": 0
+  },
+  "nabigla": {
+    "asl": 0,
+    "fsl": 1,
+    "other": 0
+  },
+  "nahihiya": {
+    "asl": 0,
+    "fsl": 1,
+    "other": 0
+  },
+  "nakakatawa": {
+    "asl": 0,
+    "fsl": 1,
+    "other": 0
+  },
+  "ngiti": {
+    "asl": 0,
+    "fsl": 1,
+    "other": 0
+  },
+  "sorpresa": {
+    "asl": 0,
+    "fsl": 1,
+    "other": 0
+  },
+  "pataas": {
+    "asl": 0,
+    "fsl": 2,
+    "other": 0
+  },
+  "kumaliwa": {
+    "asl": 0,
+    "fsl": 1,
+    "other": 0
+  },
+  "kumanan": {
+    "asl": 0,
+    "fsl": 1,
+    "other": 0
+  },
+  "pababa": {
+    "asl": 0,
+    "fsl": 1,
+    "other": 0
+  },
+  "pokus": {
+    "asl": 0,
+    "fsl": 1,
+    "other": 0
+  },
+  "direksyon_kaliwa": {
+    "asl": 0,
+    "fsl": 1,
+    "other": 0
+  },
+  "direksyon_kanan": {
+    "asl": 0,
+    "fsl": 1,
+    "other": 0
+  },
+  "distansya_kapit": {
+    "asl": 0,
+    "fsl": 2,
+    "other": 0
+  },
+  "kulang": {
+    "asl": 0,
+    "fsl": 1,
+    "other": 0
+  },
+  "malayo": {
+    "asl": 0,
+    "fsl": 1,
+    "other": 0
+  },
+  "napakalayo": {
+    "asl": 0,
+    "fsl": 1,
+    "other": 0
+  },
+  "mataas": {
+    "asl": 0,
+    "fsl": 2,
+    "other": 0
+  },
+  "maiksi": {
+    "asl": 0,
+    "fsl": 1,
+    "other": 0
+  },
+  "malaki": {
+    "asl": 0,
+    "fsl": 1,
+    "other": 0
+  },
+  "malawak": {
+    "asl": 0,
+    "fsl": 1,
+    "other": 0
+  },
+  "napakalaki": {
+    "asl": 0,
+    "fsl": 1,
+    "other": 0
+  },
+  "napakalapit": {
+    "asl": 0,
+    "fsl": 2,
+    "other": 0
+  },
+  "mabilis": {
+    "asl": 0,
+    "fsl": 3,
+    "other": 0
+  },
+  "malapit": {
+    "asl": 0,
+    "fsl": 1,
+    "other": 0
+  },
+  "napapanatili": {
+    "asl": 0,
+    "fsl": 2,
+    "other": 0
+  },
+  "pagsisikap": {
+    "asl": 0,
+    "fsl": 1,
+    "other": 0
+  },
+  "pilit": {
+    "asl": 0,
+    "fsl": 1,
+    "other": 0
+  },
+  "masikip": {
+    "asl": 0,
+    "fsl": 2,
+    "other": 0
+  },
+  "inulit": {
+    "asl": 0,
+    "fsl": 1,
+    "other": 0
+  },
+  "maluwag": {
+    "asl": 0,
+    "fsl": 1,
+    "other": 0
+  },
+  "maliit": {
+    "asl": 0,
+    "fsl": 2,
+    "other": 0
+  },
+  "mabagal": {
+    "asl": 0,
+    "fsl": 1,
+    "other": 0
+  },
+  "manipis": {
+    "asl": 0,
+    "fsl": 1,
+    "other": 0
+  },
+  "munti": {
+    "asl": 0,
+    "fsl": 1,
+    "other": 0
+  },
+  "kalagayan": {
+    "asl": 0,
+    "fsl": 1,
+    "other": 0
+  },
+  "negatibo": {
+    "asl": 0,
+    "fsl": 1,
+    "other": 0
+  },
+  "pahayag": {
+    "asl": 0,
+    "fsl": 1,
+    "other": 0
+  }
+}

@@ -43,7 +43,7 @@ class RecognitionViewModel(
     private val engine: RecognitionEngine? = null, // Optional for offline mode (Tweak 3)
     private val streamer: LandmarkStreamer? = null, // Optional for online mode
     private val context: Context,
-    initialUseOnlineMode: Boolean = true // Tweak 3: Hybrid Intelligence - toggle between modes
+    initialUseOnlineMode: Boolean = false // Default: Offline (for TFLite testing)
 ) : ViewModel() {
     private val TAG = "RecognitionViewModel"
     private val _state = MutableStateFlow<GlossEvent>(GlossEvent.Idle)
@@ -107,13 +107,18 @@ class RecognitionViewModel(
         
         viewModelScope.launch {
             if (newMode) {
-                // Switching to Online Mode: Connect streamer if available
+                // Switching to Online Mode: Connect streamer and set up event listener
                 if (streamer != null) {
                     LogUtils.d(TAG) { "🔄 Switching to Online Mode: Connecting streamer" }
                     streamer.connect()
+                    // Set up event listener for online mode
+                    setupOnlineModeEventListener()
                 }
             } else {
-                // Switching to Offline Mode: Disconnect streamer and ensure engine is ready
+                // Switching to Offline Mode: Cancel event listener, disconnect streamer, and ensure engine is ready
+                onlineModeEventJob?.cancel()
+                onlineModeEventJob = null
+                
                 if (streamer != null && streamer.isConnected()) {
                     LogUtils.d(TAG) { "🔄 Switching to Offline Mode: Disconnecting streamer" }
                     streamer.stopStreaming()
@@ -125,6 +130,122 @@ class RecognitionViewModel(
                         LogUtils.d(TAG) { "✅ Offline Mode: Engine started" }
                     } catch (e: Exception) {
                         LogUtils.w(TAG) { "⚠️ Failed to start engine: ${e.message}" }
+                    }
+                } else {
+                    LogUtils.w(TAG) { "⚠️ Cannot switch to offline mode: engine is null (TFLite model missing or failed to load)" }
+                    LogUtils.w(TAG) { "   Reverting to online mode..." }
+                    _useOnlineMode.value = true
+                    if (streamer != null) {
+                        streamer.connect()
+                        setupOnlineModeEventListener()
+                    }
+                }
+            }
+        }
+    }
+    
+    /**
+     * Set up the event listener for online mode (gRPC recognition events)
+     * This must be called when switching to online mode to process GLOSS events
+     */
+    private fun setupOnlineModeEventListener() {
+        if (streamer == null) {
+            LogUtils.w(TAG) { "⚠️ Cannot set up online mode listener: streamer is null" }
+            return
+        }
+        
+        // Cancel any existing listener
+        onlineModeEventJob?.cancel()
+        
+        // Set up new event listener
+        onlineModeEventJob = viewModelScope.launch {
+            LogUtils.i(TAG) { "🔌 Setting up online mode event listener..." }
+            
+            // Listen to recognition events (GLOSS, TONE, HANDS_DOWN)
+            streamer!!.recognitionEvents.collect { event ->
+                Log.i(TAG, "📥 ========== RECOGNITION EVENT RECEIVED ==========")
+                Log.i(TAG, "   Type: ${event.type}")
+                Log.i(TAG, "   Label: '${event.label}'")
+                Log.i(TAG, "   Confidence: ${event.confidence} (${(event.confidence * 100).toInt()}%)")
+                Log.i(TAG, "   Current glossList size: ${_glossList.value.size}")
+                Log.i(TAG, "   Current accumulator tokens: ${accumulatorState.value.tokens.size}")
+                
+                when (event.type) {
+                    RecognitionEvent.Type.GLOSS -> {
+                        Log.i(TAG, "✅ GLOSS event detected: '${event.label}' (conf=${event.confidence})")
+                        Log.i(TAG, "   Server has already validated this gloss (multi-frame validation)")
+                        Log.i(TAG, "   Calling accumulator.onSingleShotResult()...")
+                        
+                        val tokensBefore = accumulatorState.value.tokens.size
+                        val glossListBefore = _glossList.value.size
+                        
+                        // Server responses are already validated (multi-frame validation on server)
+                        // Use single-shot method: instant acceptance but debounces duplicates
+                        accumulator.onSingleShotResult(event.label)
+                        
+                        // Give a small delay to allow state to propagate
+                        kotlinx.coroutines.delay(50)
+                        
+                        val tokensAfter = accumulatorState.value.tokens.size
+                        val glossListAfter = _glossList.value.size
+                        
+                        Log.i(TAG, "   ✅ Token processed via single-shot")
+                        Log.i(TAG, "   Accumulator: $tokensBefore -> $tokensAfter tokens")
+                        Log.i(TAG, "   GlossList: $glossListBefore -> $glossListAfter items")
+                        Log.i(TAG, "   Current tokens: [${accumulatorState.value.tokens.joinToString(", ")}]")
+                        Log.i(TAG, "   Current glossList: [${_glossList.value.joinToString(", ")}]")
+                        
+                        if (tokensAfter == tokensBefore) {
+                            Log.w(TAG, "   ⚠️ WARNING: Token count did not increase! Possible duplicate or accumulator issue.")
+                        }
+                        if (glossListAfter == glossListBefore) {
+                            Log.w(TAG, "   ⚠️ WARNING: GlossList did not update! Check accumulator state observer.")
+                        }
+                    }
+                    RecognitionEvent.Type.TONE -> {
+                        // Handle tone events (if needed)
+                        LogUtils.d(TAG) { "Tone detected: ${event.label}" }
+                    }
+                    RecognitionEvent.Type.HANDS_DOWN -> {
+                        // Reset accumulator when hands are down
+                        accumulator.clear()
+                    }
+                    else -> {
+                        // Handle any unrecognized types (e.g., UNRECOGNIZED from protobuf)
+                        LogUtils.w(TAG) { "Unrecognized event type: ${event.type}" }
+                    }
+                }
+            }
+        }
+        
+        // Also listen to connection state
+        viewModelScope.launch {
+            streamer!!.connectionState.collect { state ->
+                // Always check isTranslating FIRST to prevent race conditions
+                val currentlyTranslating = _isTranslating.value
+                Log.d(TAG, "📡 Connection state changed: $state, isTranslating=$currentlyTranslating")
+                
+                when (state) {
+                    LandmarkStreamer.ConnectionState.CONNECTED -> {
+                        if (!currentlyTranslating) {
+                            _state.value = GlossEvent.Idle
+                        }
+                    }
+                    LandmarkStreamer.ConnectionState.ERROR,
+                    LandmarkStreamer.ConnectionState.DISCONNECTED -> {
+                        // CRITICAL: Don't show error during translation - connection is intentionally stopped
+                        // This prevents activity exit when stopStreaming() is called
+                        if (!currentlyTranslating) {
+                            Log.i(TAG, "⚠️ Connection lost when not translating - showing error")
+                            _state.value = GlossEvent.Error("Connection lost. Switch to offline mode?")
+                        } else {
+                            Log.i(TAG, "✅ Connection state changed to DISCONNECTED during translation - ignoring (expected behavior, prevents activity exit)")
+                        }
+                    }
+                    LandmarkStreamer.ConnectionState.CONNECTING -> {
+                        if (!currentlyTranslating) {
+                            _state.value = GlossEvent.Idle
+                        }
                     }
                 }
             }
@@ -160,6 +281,9 @@ class RecognitionViewModel(
     private val _lastBusEvent = MutableStateFlow<String?>(null)
     val lastBusEvent: StateFlow<String?> = _lastBusEvent
     
+    // Job for online mode event listener (to cancel when switching modes)
+    private var onlineModeEventJob: Job? = null
+    
     // Debouncing and temporal smoothing
     private var lastRecognitionLabel: String? = null
     private var stableFrameCount = 0
@@ -180,7 +304,7 @@ class RecognitionViewModel(
         Log.i(TAG, "📂 Context: ${context.javaClass.simpleName}, assets available: ${try { context.assets.list("") != null } catch (e: Exception) { false }}")
         
         val featureScaler = try {
-            FeatureScaler.create(context, featureDim = 237)
+            FeatureScaler.create(context)
         } catch (e: Exception) {
             Log.e(TAG, "❌ EXCEPTION during FeatureScaler.create(): ${e.javaClass.simpleName} - ${e.message}", e)
             null
@@ -188,37 +312,8 @@ class RecognitionViewModel(
         
         if (featureScaler == null) {
             Log.e(TAG, "❌ CRITICAL: Failed to initialize FeatureScaler! LSTM model requires feature scaling.")
-            Log.e(TAG, "❌ Make sure feature_mean_v2.npy and feature_std_v2.npy (size 237) are in app/src/main/assets/recognition/")
-            
-            // Try to list assets to help debug
-            try {
-                val rootAssets = context.assets.list("")?.toList() ?: emptyList()
-                val recognitionAssets = try {
-                    context.assets.list("recognition")?.toList() ?: emptyList()
-                } catch (e: Exception) {
-                    emptyList()
-                }
-                val allNpyFiles = (rootAssets + recognitionAssets.map { "recognition/$it" })
-                    .filter { it.contains("feature") || it.endsWith(".npy") }
-                Log.e(TAG, "📂 Available assets containing 'feature' or '.npy': ${allNpyFiles.joinToString(", ")}")
-                
-                // Check if files exist by trying to open them
-                val hasMean = try {
-                    context.assets.open("recognition/feature_mean_v2.npy").use { true }
-                } catch (e: Exception) {
-                    false
-                }
-                val hasStd = try {
-                    context.assets.open("recognition/feature_std_v2.npy").use { true }
-                } catch (e: Exception) {
-                    false
-                }
-                Log.e(TAG, "📂 Asset check: recognition/feature_mean_v2.npy=${if (hasMean) "✅" else "❌"}, recognition/feature_std_v2.npy=${if (hasStd) "✅" else "❌"}")
-            } catch (e: Exception) {
-                Log.e(TAG, "❌ Failed to list assets: ${e.message}", e)
-            }
         } else {
-            Log.i(TAG, "✅ FeatureScaler initialized successfully!")
+            Log.i(TAG, "✅ FeatureScaler initialized successfully (Robust Min-Max Mode)")
             Log.i(TAG, "✅ FeatureExtractor initialized with FeatureScaler (237 features)")
         }
         
@@ -258,7 +353,14 @@ class RecognitionViewModel(
                 val oldTokens = _glossList.value
                 _glossList.value = state.tokens
                 if (oldTokens != state.tokens) {
+                    Log.i(TAG, "🔄 ========== ACCUMULATOR STATE SYNC ==========")
+                    Log.i(TAG, "   Old tokens: ${oldTokens.size} items [${oldTokens.joinToString(", ")}]")
+                    Log.i(TAG, "   New tokens: ${state.tokens.size} items [${state.tokens.joinToString(", ")}]")
+                    Log.i(TAG, "   _glossList updated: ${oldTokens.size} -> ${state.tokens.size}")
+                    Log.i(TAG, "   ✅ UI will be notified of glossList change")
                     LogUtils.i(TAG) { "🔄🔄🔄 UI Synced to Accumulator: ${oldTokens.size} -> ${state.tokens.size} items, tokens=[${state.tokens.joinToString(", ")}]" }
+                } else {
+                    Log.d(TAG, "   Accumulator state unchanged: ${state.tokens.size} tokens")
                 }
             }
         }
@@ -269,66 +371,8 @@ class RecognitionViewModel(
             viewModelScope.launch {
                 // Connect to server
                 streamer.connect()
-                
-                // Listen to recognition events (GLOSS, TONE, HANDS_DOWN)
-                streamer.recognitionEvents.collect { event ->
-                    LogUtils.d(TAG) { "Recognition event received: type=${event.type}, label='${event.label}', confidence=${event.confidence}" }
-                    
-                    when (event.type) {
-                        RecognitionEvent.Type.GLOSS -> {
-                            LogUtils.d(TAG) { "📥 Server sent GLOSS: '${event.label}' (conf=${event.confidence}) - Using single-shot (instant but safe)" }
-                            
-                            // Server responses are already validated (multi-frame validation on server)
-                            // Use single-shot method: instant acceptance but debounces duplicates
-                            accumulator.onSingleShotResult(event.label)
-                            
-                            LogUtils.d(TAG) { "✅ Token processed via single-shot, current tokens: ${accumulatorState.value.tokens.size}" }
-                        }
-                        RecognitionEvent.Type.TONE -> {
-                            // Handle tone events (if needed)
-                            LogUtils.d(TAG) { "Tone detected: ${event.label}" }
-                        }
-                        RecognitionEvent.Type.HANDS_DOWN -> {
-                            // Reset accumulator when hands are down
-                            accumulator.clear()
-                        }
-                        else -> {
-                            // Handle any unrecognized types (e.g., UNRECOGNIZED from protobuf)
-                            LogUtils.w(TAG) { "Unrecognized event type: ${event.type}" }
-                        }
-                    }
-                }
-                
-                // Listen to connection state
-                streamer.connectionState.collect { state ->
-                    // Always check isTranslating FIRST to prevent race conditions
-                    val currentlyTranslating = _isTranslating.value
-                    Log.d(TAG, "📡 Connection state changed: $state, isTranslating=$currentlyTranslating")
-                    
-                    when (state) {
-                        LandmarkStreamer.ConnectionState.CONNECTED -> {
-                            if (!currentlyTranslating) {
-                                _state.value = GlossEvent.Idle
-                            }
-                        }
-                        LandmarkStreamer.ConnectionState.ERROR,
-                        LandmarkStreamer.ConnectionState.DISCONNECTED -> {
-                            // CRITICAL: Don't show error during translation - connection is intentionally stopped
-                            // This prevents activity exit when stopStreaming() is called
-                            if (!currentlyTranslating) {
-                                Log.i(TAG, "⚠️ Connection lost when not translating - showing error")
-                                _state.value = GlossEvent.Error("Connection lost. Switch to offline mode?")
-                            } else {
-                                Log.i(TAG, "✅ Connection state changed to DISCONNECTED during translation - ignoring (expected behavior, prevents activity exit)")
-                            }
-                        }
-                        LandmarkStreamer.ConnectionState.CONNECTING -> {
-                            if (!currentlyTranslating) {
-                                _state.value = GlossEvent.Idle
-                            }
-                        }
-                    }
-                }
+                // Set up event listener
+                setupOnlineModeEventListener()
             }
         } else if (engine != null) {
             // Offline mode: Use TFLite engine (Tweak 3 - Fallback)
@@ -559,6 +603,19 @@ class RecognitionViewModel(
             if (wristX != null && wristY != null) {
                 varianceDetector.addWristPosition(wristX, wristY)
                 
+                // CRITICAL: Also update accumulator's wrist history for variance detection in onSingleShotResult()
+                // This allows online mode to use FSM Exit C (variance-based dynamic sign detection)
+                // Create a dummy RecognitionResult to pass wrist data to accumulator (wrist tracking only)
+                val dummyResult = RecognitionResult(
+                    glossLabel = "",  // Not used, just for wrist tracking
+                    glossConf = 0f,
+                    glossIndex = -1,  // Not used
+                    originLabel = null,
+                    originConf = null,
+                    debugInfo = null
+                )
+                accumulator.onRecognitionResult(dummyResult, wristX, wristY)
+                
                 // Only send if variance indicates meaningful motion (skip noise)
                 if (varianceDetector.hasEnoughData()) {
                     val variance = varianceDetector.getVariance()
@@ -575,30 +632,62 @@ class RecognitionViewModel(
         } else {
             // OFFLINE MODE: Process landmarks locally using TfLiteRecognitionEngine
             if (engine == null) {
-                Log.w(TAG, "onLandmarks called in offline mode but engine not available")
+                Log.w(TAG, "⚠️ onLandmarks called in offline mode but engine not available")
+                Log.w(TAG, "   Engine is null - this means TFLite model file is missing or failed to load")
+                Log.w(TAG, "   Automatically switching to online mode as fallback...")
+                
+                // Automatically switch to online mode if engine is null and streamer is available
+                if (streamer != null && !_useOnlineMode.value) {
+                    Log.i(TAG, "🔄 Auto-switching to online mode (engine unavailable)")
+                    _useOnlineMode.value = true
+                    viewModelScope.launch {
+                        streamer.connect()
+                        setupOnlineModeEventListener()
+                    }
+                } else if (streamer == null) {
+                    Log.e(TAG, "❌ CRITICAL: Both engine and streamer are null! Recognition will not work.")
+                    Log.e(TAG, "   Engine: null")
+                    Log.e(TAG, "   Streamer: null")
+                    Log.e(TAG, "   This indicates a serious initialization problem.")
+                }
                 return@launch
             }
             
             // Process on background thread to avoid blocking
             withContext(Dispatchers.Default) {
                 try {
+                    // DIAGNOSTIC: Log feature extractor buffer status
+                    val bufferSizeBefore = featureExtractor.getCurrentBufferSize()
+                    Log.e(TAG, "🔍 PIPELINE ORCHESTRATION:")
+                    Log.e(TAG, "   Feature extractor buffer status: $bufferSizeBefore/30 frames")
+                    
                     // Use new Holistic LSTM feature extractor (30-frame buffer, 237 features per frame)
                     val byteBuffer = featureExtractor.process(result, timestampMs)
                     
                     if (byteBuffer == null) {
                         // Buffer not full yet - wait for more frames
-                        LogUtils.v(TAG) { "⏸️ Waiting for buffer: ${featureExtractor.getBufferSize()}/30 frames" }
+                        val bufferSizeAfter = featureExtractor.getCurrentBufferSize()
+                        Log.e(TAG, "⏸️ Waiting for buffer: $bufferSizeAfter/30 frames (was $bufferSizeBefore)")
                         return@withContext
                     }
                     
+                    // DIAGNOSTIC: Log ByteBuffer creation and properties
+                    val bufferSizeAfter = featureExtractor.getCurrentBufferSize()
+                    Log.e(TAG, "✅ ByteBuffer created: capacity=${byteBuffer.capacity()} bytes, position=${byteBuffer.position()}, limit=${byteBuffer.limit()}")
+                    Log.e(TAG, "   Buffer status: $bufferSizeAfter/30 frames (was $bufferSizeBefore, added 1 frame)")
+                    Log.e(TAG, "   Expected size: 30 frames × 237 features × 4 bytes = ${30 * 237 * 4} bytes")
+                    
                     // Buffer is full - pass ByteBuffer directly to engine for LSTM inference
+                    Log.e(TAG, "🔍 Checking engine type: engine=${engine?.javaClass?.simpleName}, isNull=${engine == null}")
                     if (engine is TfLiteRecognitionEngine) {
+                        Log.e(TAG, "✅ Engine is TfLiteRecognitionEngine, calling onLandmarksSequence() with buffer size: ${byteBuffer.capacity()} bytes")
                         // Pass ByteBuffer directly to engine (contains scaled 30-frame sequence)
                         // No conversion needed - engine handles ByteBuffer directly
                         engine.onLandmarksSequence(byteBuffer)
-                        LogUtils.v(TAG) { "✅ Offline recognition: processing ByteBuffer with 30 frames × 237 features (7110 floats) directly" }
+                        Log.e(TAG, "✅ onLandmarksSequence() call completed")
+                        Log.e(TAG, "✅ Offline recognition: processing ByteBuffer with 30 frames × 237 features (7110 floats) directly")
                     } else {
-                        Log.w(TAG, "⚠️ Engine is not TfLiteRecognitionEngine, cannot process ByteBuffer")
+                        Log.e(TAG, "⚠️ Engine is not TfLiteRecognitionEngine (type: ${engine?.javaClass?.simpleName}), cannot process ByteBuffer")
                     }
                 } catch (e: Exception) {
                     Log.e(TAG, "❌ Error processing landmarks in offline mode", e)
@@ -656,7 +745,10 @@ class RecognitionViewModel(
                     val prevSmoothed = smoothedConfidenceMap[newGloss] ?: rawConfidence
                     val smoothedScore = (rawConfidence * 0.7f) + (prevSmoothed * 0.3f)
                     smoothedConfidenceMap[newGloss] = smoothedScore
-                    LogUtils.d(TAG) { "📊 Confidence smoothing: '$newGloss' raw=$rawConfidence, prevSmoothed=$prevSmoothed, smoothed=$smoothedScore" }
+                    Log.e(TAG, "📊 CONFIDENCE SMOOTHING: '$newGloss'")
+                    Log.e(TAG, "   Raw confidence: %.6f (${(rawConfidence * 100).toInt()}%)".format(rawConfidence))
+                    Log.e(TAG, "   Previous smoothed: %.6f (${(prevSmoothed * 100).toInt()}%)".format(prevSmoothed))
+                    Log.e(TAG, "   Smoothed confidence: %.6f (${(smoothedScore * 100).toInt()}%) [formula: raw*0.7 + prev*0.3]".format(smoothedScore))
                     
                     // Optional: If the smoothed score is too low, ignore it immediately
                     // This filters out "flickering" weak detections
@@ -699,7 +791,12 @@ class RecognitionViewModel(
                     lastDetectedGloss = newGloss
                     lastDetectionTime = currentTime
                     
-                    LogUtils.d(TAG) { "✅ GLOSS accepted: '$newGloss' (raw: $rawConfidence, smoothed: $smoothedScore)" }
+                    Log.e(TAG, "✅ FINAL PREDICTION SELECTION:")
+                    Log.e(TAG, "   Gloss: '$newGloss'")
+                    Log.e(TAG, "   Raw confidence: %.6f (${(rawConfidence * 100).toInt()}%)".format(rawConfidence))
+                    Log.e(TAG, "   Smoothed confidence: %.6f (${(smoothedScore * 100).toInt()}%)".format(smoothedScore))
+                    Log.e(TAG, "   Reason: Passed all filters (cooldown, same-sign check, sentence limit)")
+                    Log.e(TAG, "✅ GLOSS accepted: '$newGloss' (raw: $rawConfidence, smoothed: $smoothedScore)")
                     
                     // Convert to RecognitionResult for UI compatibility
                     val recognitionResult = RecognitionResult(
@@ -816,9 +913,15 @@ class RecognitionViewModel(
         
         // Set loading state IMMEDIATELY (synchronously) before launching coroutine
         // This ensures UI shows ModalBottomSheet instantly with loading state
-        Log.d(TAG, "⏳ [CONFIRM_TRANSLATE] Step 1/5: Setting isTranslating = true (SYNCHRONOUSLY)")
+        Log.i(TAG, "🚀 ========== TRANSLATE BUTTON CLICKED ==========")
+        Log.i(TAG, "   Current glossList: [${_glossList.value.joinToString(", ")}] (${_glossList.value.size} items)")
+        Log.i(TAG, "   Current isTranslating: ${_isTranslating.value}")
+        Log.i(TAG, "   Current translationResult: ${if (_translationResult.value != null) "not null" else "null"}")
+        
+        Log.i(TAG, "⏳ [CONFIRM_TRANSLATE] Step 1/5: Setting isTranslating = true (SYNCHRONOUSLY)")
         _isTranslating.value = true
-        Log.d(TAG, "✅ [CONFIRM_TRANSLATE] isTranslating state updated: ${_isTranslating.value}")
+        Log.i(TAG, "✅ [CONFIRM_TRANSLATE] isTranslating state updated: ${_isTranslating.value}")
+        Log.i(TAG, "   ✅ ModalBottomSheet should show immediately with loading indicator")
         
         // Pause camera scanning IMMEDIATELY
         Log.d(TAG, "⏸️ [CONFIRM_TRANSLATE] Step 2/5: Pausing camera scanning (isScanning = false) (SYNCHRONOUSLY)")
@@ -831,17 +934,18 @@ class RecognitionViewModel(
             Log.d(TAG, "📞 [TRANSLATE] Coroutine thread: ${Thread.currentThread().name}")
             
             try {
-                // STRATEGY: Try Online first, Fallback to Offline
+                // STRATEGY: Use Online if in online mode, otherwise use Offline
                 val useOnline = _useOnlineMode.value && streamer != null
                 Log.d(TAG, "🔀 [TRANSLATE] Strategy decision:")
                 Log.d(TAG, "   - Online mode enabled: ${_useOnlineMode.value}")
                 Log.d(TAG, "   - Streamer available: ${streamer != null}")
-                Log.d(TAG, "   - Will try online: $useOnline")
+                Log.d(TAG, "   - Will use online: $useOnline")
                 
                 if (useOnline) {
+                    // ONLINE MODE: Use gRPC TranslateSequence API (NO fallback to offline)
                     val onlineStartTime = System.currentTimeMillis()
                     Log.i(TAG, "☁️ [TRANSLATE] ========================================")
-                    Log.i(TAG, "☁️ [TRANSLATE] Attempting ONLINE (Cloud) Translation...")
+                    Log.i(TAG, "☁️ [TRANSLATE] Using ONLINE (Cloud) Translation API...")
                     try {
                         // Stop gRPC stream to prevent interference with TranslateSequence (keep channel for blocking call)
                         val stopStreamStartTime = System.currentTimeMillis()
@@ -856,10 +960,10 @@ class RecognitionViewModel(
                         Log.d(TAG, "   - Tone: $tone")
                         Log.d(TAG, "   - Origin: $origin")
                         
-                        // Try Cloud translation with 5s timeout
+                        // Try Cloud translation with 30s timeout (Gemini API can take 10-20s)
                         val cloudStartTime = System.currentTimeMillis()
-                        Log.d(TAG, "⏱️ [TRANSLATE] Starting cloud translation with 5s timeout...")
-                        val result = withTimeout(5000L) {
+                        Log.d(TAG, "⏱️ [TRANSLATE] Starting cloud translation with 30s timeout...")
+                        val result = withTimeout(30000L) {
                             streamer!!.translateSequence(glosses, tone, origin)
                         }
                         val cloudDuration = System.currentTimeMillis() - cloudStartTime
@@ -887,21 +991,38 @@ class RecognitionViewModel(
                         return@launch
                     } catch (e: TimeoutCancellationException) {
                         val onlineDuration = System.currentTimeMillis() - onlineStartTime
-                        Log.w(TAG, "⚠️ [TRANSLATE] Cloud translation timed out after ${onlineDuration}ms (5s limit)")
-                        Log.w(TAG, "⚠️ [TRANSLATE] Falling back to Offline translation...")
+                        Log.e(TAG, "❌ [TRANSLATE] Cloud translation timed out after ${onlineDuration}ms (10s limit)")
+                        Log.e(TAG, "❌ [TRANSLATE] Online mode: NOT falling back to offline - showing error")
+                        
+                        // In online mode, don't fall back - show error instead
+                        val errorResult = TranslationResult.newBuilder()
+                            .setSentence("Translation timeout: Server did not respond in time. Please check your connection.")
+                            .setSource("Error")
+                            .build()
+                        _translationResult.value = errorResult
+                        _isTranslating.value = false
+                        return@launch
                     } catch (e: Exception) {
                         val onlineDuration = System.currentTimeMillis() - onlineStartTime
-                        Log.w(TAG, "⚠️ [TRANSLATE] Cloud translation failed after ${onlineDuration}ms: ${e.message}", e)
-                        Log.w(TAG, "⚠️ [TRANSLATE] Exception type: ${e.javaClass.simpleName}")
-                        Log.w(TAG, "⚠️ [TRANSLATE] Falling back to Offline translation...")
+                        Log.e(TAG, "❌ [TRANSLATE] Cloud translation failed after ${onlineDuration}ms: ${e.message}", e)
+                        Log.e(TAG, "❌ [TRANSLATE] Exception type: ${e.javaClass.simpleName}")
+                        Log.e(TAG, "❌ [TRANSLATE] Online mode: NOT falling back to offline - showing error")
                         e.printStackTrace()
-                        // Fall through to Offline logic below...
+                        
+                        // In online mode, don't fall back - show error instead
+                        val errorResult = TranslationResult.newBuilder()
+                            .setSentence("Translation failed: ${e.message ?: "Unknown error"}. Please check your connection.")
+                            .setSource("Error")
+                            .build()
+                        _translationResult.value = errorResult
+                        _isTranslating.value = false
+                        return@launch
                     }
                 } else {
                     Log.d(TAG, "⏭️ [TRANSLATE] Skipping online translation (not in online mode or streamer unavailable)")
                 }
                 
-                // OFFLINE FALLBACK (Runs if Online failed OR if mode is Offline)
+                // OFFLINE MODE: Use local TFLite translation (only when NOT in online mode)
                 val offlineStartTime = System.currentTimeMillis()
                 Log.i(TAG, "📱 [TRANSLATE] ========================================")
                 Log.i(TAG, "📱 [TRANSLATE] Running OFFLINE Translation...")

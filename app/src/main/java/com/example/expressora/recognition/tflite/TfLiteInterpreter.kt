@@ -94,6 +94,12 @@ class TfLiteInterpreter(
             setNumThreads(threads)
             Log.i(TAG, "Interpreter threads: $threads")
             
+            // CRITICAL FIX: Disable XNNPACK for LSTM models
+            // XNNPACK crashes with LSTM "TensorList" operations (Select TF Ops).
+            // We must force standard CPU execution for stability.
+            setUseXNNPACK(false)
+            Log.w(TAG, "⛔ XNNPACK disabled: not compatible with LSTM dynamic tensor lists")
+            
             // For INT8 models, ONLY use CPU/XNNPACK - skip GPU and NNAPI
             // For LSTM models, ONLY use CPU/XNNPACK - skip GPU and NNAPI (Select TF Ops not supported on GPU)
             // For FP16 models, prioritize GPU for optimal performance
@@ -197,20 +203,9 @@ class TfLiteInterpreter(
                         }
                     }
                     "CPU", "XNNPACK" -> {
-                        if (PerformanceConfig.USE_XNNPACK && activeDelegate == "CPU") {
-                            try {
-                                setUseXNNPACK(true)
-                                activeDelegate = "XNNPACK"
-                                Log.i(TAG, "✓ XNNPACK delegate enabled " +
-                                        when {
-                                            isQuantizedModel -> "(optimized for INT8)"
-                                            isLstmModel -> "(optimized for LSTM with Select TF Ops)"
-                                            else -> ""
-                                        })
-                            } catch (e: Exception) {
-                                Log.w(TAG, "XNNPACK not available: ${e.message}")
-                            }
-                        }
+                        // XNNPACK is disabled globally for LSTM stability
+                        Log.i(TAG, "✓ Using standard CPU execution (XNNPACK disabled for LSTM compatibility)")
+                        activeDelegate = "CPU"
                     }
                 }
             }
@@ -239,7 +234,28 @@ class TfLiteInterpreter(
         val modelBuffer = runCatching { loadModelMapped(context, modelAssetName) }
             .getOrElse { loadModelDirect(context, modelAssetName) }
         
-        val interp = Interpreter(modelBuffer, opts)
+        // Verify model file is loaded fresh from assets
+        val modelSize = modelBuffer.capacity()
+        val modelSizeMB = modelSize / (1024.0 * 1024.0)
+        Log.i(TAG, "✅ Model loaded from assets: '$modelAssetName', size=${modelSize} bytes (${"%.2f".format(modelSizeMB)} MB)")
+        Log.i(TAG, "   Model buffer capacity: ${modelBuffer.capacity()}, position: ${modelBuffer.position()}, limit: ${modelBuffer.limit()}")
+        
+        // Verify model version
+        if (modelAssetName.contains("v19")) {
+            Log.i(TAG, "✅ Model version confirmed: v19 (expressora_unified_v19.tflite)")
+        } else {
+            Log.w(TAG, "⚠️ Model version check: Expected v19, but model path is: '$modelAssetName'")
+        }
+        
+        val interp = try {
+            Interpreter(modelBuffer, opts)
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ CRITICAL: Failed to create TFLite Interpreter!", e)
+            Log.e(TAG, "❌ Interpreter creation error type: ${e.javaClass.simpleName}, message: ${e.message}")
+            Log.e(TAG, "❌ Model asset: $modelAssetName")
+            Log.e(TAG, "❌ Active delegate: $activeDelegate")
+            throw IllegalStateException("Cannot create TFLite Interpreter", e)
+        }
         
         // Inspect input tensor for quantization
         val inputTensor = interp.getInputTensor(0)
@@ -334,21 +350,30 @@ class TfLiteInterpreter(
     }
 
     private fun loadModelMapped(context: Context, assetName: String): MappedByteBuffer {
+        Log.d(TAG, "📥 Loading model via memory-mapped file: '$assetName'")
         val afd = context.assets.openFd(assetName)
+        val fileSize = afd.declaredLength
+        Log.d(TAG, "   Asset file descriptor: startOffset=${afd.startOffset}, declaredLength=$fileSize bytes")
         FileInputStream(afd.fileDescriptor).use { fis ->
             val channel = fis.channel
-            return channel.map(FileChannel.MapMode.READ_ONLY, afd.startOffset, afd.declaredLength)
+            val buffer = channel.map(FileChannel.MapMode.READ_ONLY, afd.startOffset, afd.declaredLength)
+            Log.d(TAG, "   ✅ Model mapped successfully: ${buffer.capacity()} bytes")
+            return buffer
         }
     }
 
     private fun loadModelDirect(context: Context, assetName: String): ByteBuffer {
+        Log.d(TAG, "📥 Loading model via direct read: '$assetName'")
         val bytes = context.assets.open(assetName).readBytes()
-        return ByteBuffer.allocateDirect(bytes.size)
+        Log.d(TAG, "   Asset file size: ${bytes.size} bytes")
+        val buffer = ByteBuffer.allocateDirect(bytes.size)
             .order(ByteOrder.nativeOrder())
             .apply {
                 put(bytes)
                 rewind()
             }
+        Log.d(TAG, "   ✅ Model loaded directly: ${buffer.capacity()} bytes")
+        return buffer
     }
 
     /**
@@ -766,6 +791,40 @@ class TfLiteInterpreter(
         }
         
         return buffer
+    }
+    
+    /**
+     * Calculate hash of ByteBuffer for sequence models (LSTM)
+     * Checks first and last frames to detect if input is static
+     */
+    private fun calculateBufferHashForSequence(buffer: ByteBuffer): Int {
+        val position = buffer.position()
+        buffer.rewind()
+        
+        var hash = 0
+        val bytesPerFrame = 237 * 4 // 237 features × 4 bytes per float
+        val bytesToCheck = minOf(100, bytesPerFrame) // Check first 100 bytes of first frame
+        
+        // Hash first frame
+        if (buffer.remaining() >= bytesToCheck) {
+            repeat(bytesToCheck) {
+                hash = 31 * hash + (buffer.get().toInt() and 0xFF)
+            }
+        }
+        
+        // Hash last frame if available
+        if (buffer.capacity() >= bytesPerFrame * 30) {
+            buffer.position((bytesPerFrame * 29).toInt()) // Start of last frame
+            val lastFrameBytesToCheck = minOf(100, bytesPerFrame)
+            repeat(lastFrameBytesToCheck) {
+                if (buffer.hasRemaining()) {
+                    hash = 31 * hash + (buffer.get().toInt() and 0xFF)
+                }
+            }
+        }
+        
+        buffer.position(position)
+        return hash
     }
     
     /**
@@ -1383,6 +1442,85 @@ class TfLiteInterpreter(
     fun runMultiOutputSequence(inputBuffer: ByteBuffer): MultiOutputResult {
         inferenceCallCount++
         
+        // CRITICAL: Log which code path will be taken
+        Log.e(TAG, "🔍 INFERENCE PATH: isInputQuantized=$isInputQuantized, isOutputQuantized=$isOutputQuantized, hasMultiHead=$hasMultiHead")
+        Log.e(TAG, "🔍 Input buffer: capacity=${inputBuffer.capacity()} bytes, position=${inputBuffer.position()}, limit=${inputBuffer.limit()}")
+        
+        // DIAGNOSTIC: Log input preprocessing statistics BEFORE inference
+        inputBuffer.rewind()
+        val inputFloats = FloatArray(featureDim)
+        inputBuffer.asFloatBuffer().get(inputFloats)
+        inputBuffer.rewind()
+        
+        val inputMin = inputFloats.minOrNull() ?: 0f
+        val inputMax = inputFloats.maxOrNull() ?: 0f
+        val inputMean = inputFloats.average().toFloat()
+        val inputStd = kotlin.math.sqrt(inputFloats.map { (it - inputMean) * (it - inputMean) }.average()).toFloat()
+        val sentinelCount = inputFloats.count { kotlin.math.abs(it - (-10.0f)) < 0.01f }
+        val validCount = inputFloats.size - sentinelCount
+        
+        // Calculate ByteBuffer content hash for duplicate detection
+        val bufferHash = calculateBufferHashForSequence(inputBuffer)
+        val isDuplicate = (bufferHash == lastInputHash && inferenceCallCount > 1)
+        
+        // Frame-by-frame comparison: extract first frame (237 features) and compare
+        val firstFrame = inputFloats.slice(0 until minOf(237, inputFloats.size))
+        val lastFrame = if (inputFloats.size >= 237 * 30) {
+            inputFloats.slice((237 * 29) until (237 * 30))
+        } else {
+            emptyList()
+        }
+        val firstFrameHash = firstFrame.hashCode()
+        val lastFrameHash = lastFrame.hashCode()
+        
+        Log.e(TAG, "📥 INPUT PREPROCESSING DIAGNOSTICS (before inference):")
+        Log.e(TAG, "   Range: [$inputMin, $inputMax] (expected: sentinels=-10.0, valid data in [-1.0, 1.0])")
+        Log.e(TAG, "   Mean: $inputMean, Std: $inputStd")
+        Log.e(TAG, "   Sentinel values (-10.0): $sentinelCount, Valid values: $validCount")
+        Log.e(TAG, "   First 10 values: ${inputFloats.take(10).joinToString { "%.3f".format(it) }}")
+        Log.e(TAG, "   🔍 ByteBuffer hash: $bufferHash (was: $lastInputHash, duplicate: $isDuplicate)")
+        Log.e(TAG, "   🔍 Frame comparison: firstFrame hash=$firstFrameHash, lastFrame hash=$lastFrameHash")
+        Log.e(TAG, "   🔍 First frame (237 features) first 10: ${firstFrame.take(10).joinToString { "%.3f".format(it) }}")
+        if (lastFrame.isNotEmpty()) {
+            Log.e(TAG, "   🔍 Last frame (237 features) first 10: ${lastFrame.take(10).joinToString { "%.3f".format(it) }}")
+        }
+        
+        if (isDuplicate) {
+            Log.e(TAG, "❌ CRITICAL: ByteBuffer is IDENTICAL to previous frame! Model will produce same output!")
+        }
+        
+        lastInputHash = bufferHash
+        
+        // CRITICAL: Replace sentinel values (-10.0) with 0.0 to match training data format
+        // Training used fillna(0), so model expects 0.0 for missing values, not -10.0
+        // This must be done AFTER feature scaling but BEFORE inference
+        inputBuffer.rewind()
+        val totalFloats = featureDim // 30 frames × 237 features = 7110 floats
+        val correctedFloats = FloatArray(totalFloats)
+        var sentinelReplacedCount = 0
+        
+        // Read all floats from buffer
+        for (i in correctedFloats.indices) {
+            val value = inputBuffer.getFloat()
+            if (kotlin.math.abs(value - (-10.0f)) < 0.01f) {
+                correctedFloats[i] = 0.0f
+                sentinelReplacedCount++
+            } else {
+                correctedFloats[i] = value
+            }
+        }
+        
+        // Rewrite buffer with corrected values
+        inputBuffer.rewind()
+        for (value in correctedFloats) {
+            inputBuffer.putFloat(value)
+        }
+        inputBuffer.rewind()
+        
+        if (sentinelReplacedCount > 0) {
+            Log.e(TAG, "✅ Replaced $sentinelReplacedCount sentinel values (-10.0) with 0.0 to match training data format")
+        }
+        
         // Rewind buffer to ensure we read from start
         inputBuffer.rewind()
         
@@ -1390,9 +1528,19 @@ class TfLiteInterpreter(
         try {
             val inputTensor = interpreter.getInputTensor(0)
             val tensorShape = inputTensor.shape()
-            LogUtils.debugIfVerbose(TAG) { "LSTM input tensor: shape=${tensorShape.contentToString()}, bufferSize=${inputBuffer.capacity()} bytes" }
+            val tensorDataType = inputTensor.dataType()
+            Log.e(TAG, "📐 Input tensor shape: ${tensorShape.contentToString()} (expected: [1, 30, 237])")
+            Log.e(TAG, "📐 Input tensor data type: $tensorDataType (expected: FLOAT32)")
+            
+            // Verify shape matches expected [1, 30, 237]
+            val expectedShape = intArrayOf(1, 30, 237)
+            if (!tensorShape.contentEquals(expectedShape)) {
+                Log.e(TAG, "❌ CRITICAL: Input tensor shape mismatch! Expected [1, 30, 237], got ${tensorShape.contentToString()}")
+            } else {
+                Log.e(TAG, "✅ Input tensor shape verified: [1, 30, 237]")
+            }
         } catch (e: Exception) {
-            Log.w(TAG, "⚠️ Error validating input tensor: ${e.message}")
+            Log.e(TAG, "⚠️ Error validating input tensor: ${e.message}")
         }
         
         // Ensure ByteBuffer is ready for reading
@@ -1404,34 +1552,41 @@ class TfLiteInterpreter(
         }
         inputBuffer.limit(inputBuffer.capacity())
         
-        // CRITICAL: Resize input to [1, 30, 237] for LSTM model
+        // CRITICAL: Resize input to [1, 30, 237] for LSTM model with error handling
         // ByteBuffer is flat (7110 floats), but LSTM expects 3D tensor [batch=1, time=30, features=237]
         try {
-            // Check current shape first
-            val currentShape = interpreter.getInputTensor(0).shape()
-            LogUtils.d(TAG) { "📐 Current input tensor shape: ${currentShape.contentToString()}" }
+            val inputTensor = interpreter.getInputTensor(0)
+            val currentShape = inputTensor.shape()
+            Log.d(TAG, "📐 Current input tensor shape: ${currentShape.contentToString()}")
             
-            // Resize to [1, 30, 237] if not already correct
             val targetShape = intArrayOf(1, 30, 237)
             if (!currentShape.contentEquals(targetShape)) {
-                LogUtils.i(TAG) { "🔄 Resizing input tensor from ${currentShape.contentToString()} to [1, 30, 237]" }
-                interpreter.resizeInput(0, targetShape)
-                interpreter.allocateTensors() // Critical after resize
+                Log.i(TAG, "🔄 Resizing input tensor from ${currentShape.contentToString()} to [1, 30, 237]")
                 
-                // Verify resize succeeded
-                val newShape = interpreter.getInputTensor(0).shape()
-                if (newShape.contentEquals(targetShape)) {
-                    LogUtils.i(TAG) { "✅ LSTM input shape successfully resized to [1, 30, 237]" }
-                } else {
-                    Log.e(TAG, "❌ Resize failed! Expected [1, 30, 237], got ${newShape.contentToString()}")
-                    throw IllegalStateException("Failed to resize input tensor to [1, 30, 237]. Current shape: ${newShape.contentToString()}")
+                try {
+                    interpreter.resizeInput(0, targetShape)
+                    interpreter.allocateTensors() // Critical after resize
+                    
+                    // Verify resize succeeded
+                    val newShape = interpreter.getInputTensor(0).shape()
+                    if (newShape.contentEquals(targetShape)) {
+                        Log.i(TAG, "✅ LSTM input shape successfully resized to [1, 30, 237]")
+                    } else {
+                        Log.e(TAG, "❌ Resize verification failed! Expected [1, 30, 237], got ${newShape.contentToString()}")
+                        throw IllegalStateException("Resize verification failed: expected [1, 30, 237], got ${newShape.contentToString()}")
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "❌ CRITICAL: Tensor resize failed!", e)
+                    Log.e(TAG, "❌ Resize error type: ${e.javaClass.simpleName}, message: ${e.message}")
+                    throw IllegalStateException("Cannot resize input tensor for LSTM inference", e)
                 }
             } else {
-                LogUtils.d(TAG) { "✅ Input tensor already has correct shape [1, 30, 237]" }
+                Log.d(TAG, "✅ Input tensor already has correct shape [1, 30, 237]")
             }
         } catch (e: Exception) {
             Log.e(TAG, "❌ CRITICAL: Failed to prepare input tensor for LSTM inference", e)
-            throw IllegalStateException("Cannot run LSTM inference: input tensor shape setup failed", e)
+            Log.e(TAG, "❌ Error type: ${e.javaClass.simpleName}, message: ${e.message}")
+            throw IllegalStateException("Cannot run LSTM inference: input tensor setup failed", e)
         }
         
         // Verify expected output size (should be 250 classes for new LSTM model)
@@ -1439,12 +1594,14 @@ class TfLiteInterpreter(
         LogUtils.debugIfVerbose(TAG) { "LSTM expected output size: $expectedOutputSize classes" }
         
         // Create output buffers
+        Log.e(TAG, "🔍 Creating output buffers: numClasses=$numClasses, expectedOutputSize=$expectedOutputSize")
         val glossLogits = if (isOutputQuantized) {
+            Log.e(TAG, "🔍 Using QUANTIZED output path")
             val quantizedOutput = Array(1) { ByteArray(numClasses) }
             
             // Verify output buffer size matches model output [1, numClasses]
             if (quantizedOutput[0].size != expectedOutputSize) {
-                Log.w(TAG, "⚠️ Output buffer size mismatch: ${quantizedOutput[0].size} != $expectedOutputSize (expected [1, $expectedOutputSize])")
+                Log.e(TAG, "⚠️ Output buffer size mismatch: ${quantizedOutput[0].size} != $expectedOutputSize (expected [1, $expectedOutputSize])")
             }
             
             if (hasMultiHead && interpreter.outputTensorCount > 1) {
@@ -1466,9 +1623,17 @@ class TfLiteInterpreter(
                     outputs[1] = originFloatOutput
                 }
                 
-                // Run inference with ByteBuffer input
-                inputBuffer.rewind()
-                interpreter.runForMultipleInputsOutputs(arrayOf(inputBuffer), outputs)
+                // Run inference with ByteBuffer input - wrapped in error handling
+                try {
+                    inputBuffer.rewind()
+                    interpreter.runForMultipleInputsOutputs(arrayOf(inputBuffer), outputs)
+                } catch (e: Exception) {
+                    Log.e(TAG, "❌ CRITICAL: Inference execution failed!", e)
+                    Log.e(TAG, "❌ Inference error type: ${e.javaClass.simpleName}, message: ${e.message}")
+                    Log.e(TAG, "❌ Buffer state: capacity=${inputBuffer.capacity()}, position=${inputBuffer.position()}, limit=${inputBuffer.limit()}")
+                    Log.e(TAG, "❌ Active delegate: $activeDelegate")
+                    throw IllegalStateException("LSTM inference execution failed", e)
+                }
                 
                 // Dequantize outputs
                 val glossFloat = FloatArray(numClasses) { i ->
@@ -1482,23 +1647,76 @@ class TfLiteInterpreter(
                     originFloatOutput?.get(0)
                 }
                 
+                // CRITICAL DIAGNOSTIC: Log raw model output immediately after inference (multi-head quantized path)
+                val rawMax = glossFloat.maxOrNull() ?: 0f
+                val rawMin = glossFloat.minOrNull() ?: 0f
+                val rawMean = glossFloat.average().toFloat()
+                val rawStd = kotlin.math.sqrt(glossFloat.map { (it - rawMean) * (it - rawMean) }.average()).toFloat()
+                val rawSum = glossFloat.sum()
+                val top5Indices = glossFloat.mapIndexed { idx, value -> idx to value }
+                    .sortedByDescending { it.second }
+                    .take(5)
+                
+                Log.e(TAG, "🔬 RAW MODEL OUTPUT (multi-head quantized, after dequantization):")
+                Log.e(TAG, "   Range: [$rawMin, $rawMax] (span: ${rawMax - rawMin})")
+                Log.e(TAG, "   Mean: $rawMean, Std: $rawStd")
+                Log.e(TAG, "   Sum: $rawSum (if ~1.0, model outputs PROBABILITIES; if not, outputs LOGITS)")
+                Log.e(TAG, "   Top 5: ${top5Indices.joinToString { "idx=${it.first}=${it.second}" }}")
+                if (rawMax - rawMin < 0.1f) {
+                    Log.e(TAG, "❌ CRITICAL: Model output range is too small (${rawMax - rawMin}) - model may not be processing input!")
+                }
+                if (kotlin.math.abs(rawSum - 1.0f) < 0.01f) {
+                    Log.e(TAG, "⚠️ WARNING: Model outputs sum to ~1.0 - model has SOFTMAX layer! Do NOT apply softmax again!")
+                }
+                
                 MultiOutputResult(glossFloat, originFloat)
             } else {
                 // Single output - use runForMultipleInputsOutputs for safer tensor mapping
-                inputBuffer.rewind()
-                val inputs = arrayOf(inputBuffer)
-                val outputs = mapOf(0 to quantizedOutput)
-                interpreter.runForMultipleInputsOutputs(inputs, outputs)
+                try {
+                    inputBuffer.rewind()
+                    val inputs = arrayOf(inputBuffer)
+                    val outputs = mapOf(0 to quantizedOutput)
+                    interpreter.runForMultipleInputsOutputs(inputs, outputs)
+                } catch (e: Exception) {
+                    Log.e(TAG, "❌ CRITICAL: Inference execution failed!", e)
+                    Log.e(TAG, "❌ Inference error type: ${e.javaClass.simpleName}, message: ${e.message}")
+                    Log.e(TAG, "❌ Buffer state: capacity=${inputBuffer.capacity()}, position=${inputBuffer.position()}, limit=${inputBuffer.limit()}")
+                    Log.e(TAG, "❌ Active delegate: $activeDelegate")
+                    throw IllegalStateException("LSTM inference execution failed", e)
+                }
                 
                 // Dequantize
                 val glossFloat = FloatArray(numClasses) { i ->
                     dequantizeByte(quantizedOutput[0][i], outputScale, outputZeroPoint)
                 }
                 
+                // CRITICAL DIAGNOSTIC: Log raw model output immediately after inference (quantized single-output path)
+                val rawMax = glossFloat.maxOrNull() ?: 0f
+                val rawMin = glossFloat.minOrNull() ?: 0f
+                val rawMean = glossFloat.average().toFloat()
+                val rawStd = kotlin.math.sqrt(glossFloat.map { (it - rawMean) * (it - rawMean) }.average()).toFloat()
+                val rawSum = glossFloat.sum()
+                val top5Indices = glossFloat.mapIndexed { idx, value -> idx to value }
+                    .sortedByDescending { it.second }
+                    .take(5)
+                
+                Log.e(TAG, "🔬 RAW MODEL OUTPUT (quantized single-output, after dequantization):")
+                Log.e(TAG, "   Range: [$rawMin, $rawMax] (span: ${rawMax - rawMin})")
+                Log.e(TAG, "   Mean: $rawMean, Std: $rawStd")
+                Log.e(TAG, "   Sum: $rawSum (if ~1.0, model outputs PROBABILITIES; if not, outputs LOGITS)")
+                Log.e(TAG, "   Top 5: ${top5Indices.joinToString { "idx=${it.first}=${it.second}" }}")
+                if (rawMax - rawMin < 0.1f) {
+                    Log.e(TAG, "❌ CRITICAL: Model output range is too small (${rawMax - rawMin}) - model may not be processing input!")
+                }
+                if (kotlin.math.abs(rawSum - 1.0f) < 0.01f) {
+                    Log.e(TAG, "⚠️ WARNING: Model outputs sum to ~1.0 - model has SOFTMAX layer! Do NOT apply softmax again!")
+                }
+                
                 MultiOutputResult(glossFloat, null)
             }
         } else {
             // Float output
+            Log.e(TAG, "🔍 Using FLOAT output path")
             val glossOutput = Array(1) { FloatArray(numClasses) }
             
             // Verify output buffer size matches model output [1, numClasses]
@@ -1513,17 +1731,82 @@ class TfLiteInterpreter(
                     1 to originOutput
                 )
                 
-                // Run inference with ByteBuffer input
-                inputBuffer.rewind()
-                interpreter.runForMultipleInputsOutputs(arrayOf(inputBuffer), outputs)
+                // Run inference with ByteBuffer input - wrapped in error handling
+                try {
+                    inputBuffer.rewind()
+                    interpreter.runForMultipleInputsOutputs(arrayOf(inputBuffer), outputs)
+                    
+                    // CRITICAL DIAGNOSTIC: Log raw model output immediately after inference (multi-head float path)
+                    val rawOutput = glossOutput[0]
+                    val rawMax = rawOutput.maxOrNull() ?: 0f
+                    val rawMin = rawOutput.minOrNull() ?: 0f
+                    val rawMean = rawOutput.average().toFloat()
+                    val rawStd = kotlin.math.sqrt(rawOutput.map { (it - rawMean) * (it - rawMean) }.average()).toFloat()
+                    val rawSum = rawOutput.sum()
+                    val top5Indices = rawOutput.mapIndexed { idx, value -> idx to value }
+                        .sortedByDescending { it.second }
+                        .take(5)
+                    
+                    Log.e(TAG, "🔬 RAW MODEL OUTPUT (multi-head float, immediately after inference):")
+                    Log.e(TAG, "   Range: [$rawMin, $rawMax] (span: ${rawMax - rawMin})")
+                    Log.e(TAG, "   Mean: $rawMean, Std: $rawStd")
+                    Log.e(TAG, "   Sum: $rawSum (if ~1.0, model outputs PROBABILITIES; if not, outputs LOGITS)")
+                    Log.e(TAG, "   Top 5: ${top5Indices.joinToString { "idx=${it.first}=${it.second}" }}")
+                    if (rawMax - rawMin < 0.1f) {
+                        Log.e(TAG, "❌ CRITICAL: Model output range is too small (${rawMax - rawMin}) - model may not be processing input!")
+                    }
+                    if (kotlin.math.abs(rawSum - 1.0f) < 0.01f) {
+                        Log.e(TAG, "⚠️ WARNING: Model outputs sum to ~1.0 - model has SOFTMAX layer! Do NOT apply softmax again!")
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "❌ CRITICAL: Inference execution failed!", e)
+                    Log.e(TAG, "❌ Inference error type: ${e.javaClass.simpleName}, message: ${e.message}")
+                    Log.e(TAG, "❌ Buffer state: capacity=${inputBuffer.capacity()}, position=${inputBuffer.position()}, limit=${inputBuffer.limit()}")
+                    Log.e(TAG, "❌ Active delegate: $activeDelegate")
+                    throw IllegalStateException("LSTM inference execution failed", e)
+                }
                 
                 MultiOutputResult(glossOutput[0], originOutput[0])
             } else {
                 // Single output - use runForMultipleInputsOutputs for safer tensor mapping
-                inputBuffer.rewind()
-                val inputs = arrayOf(inputBuffer)
-                val outputs = mapOf(0 to glossOutput)
-                interpreter.runForMultipleInputsOutputs(inputs, outputs)
+                try {
+                    inputBuffer.rewind()
+                    val inputs = arrayOf(inputBuffer)
+                    val outputs = mapOf(0 to glossOutput)
+                    interpreter.runForMultipleInputsOutputs(inputs, outputs)
+                    
+                    // CRITICAL DIAGNOSTIC: Log raw model output immediately after inference
+                    val rawOutput = glossOutput[0]
+                    val rawMax = rawOutput.maxOrNull() ?: 0f
+                    val rawMin = rawOutput.minOrNull() ?: 0f
+                    val rawMean = rawOutput.average().toFloat()
+                    val rawStd = kotlin.math.sqrt(rawOutput.map { (it - rawMean) * (it - rawMean) }.average()).toFloat()
+                    val rawSum = rawOutput.sum()
+                    val top5Indices = rawOutput.mapIndexed { idx, value -> idx to value }
+                        .sortedByDescending { it.second }
+                        .take(5)
+                    
+                    Log.e(TAG, "🔬 RAW MODEL OUTPUT (immediately after inference):")
+                    Log.e(TAG, "   Range: [$rawMin, $rawMax] (span: ${rawMax - rawMin})")
+                    Log.e(TAG, "   Mean: $rawMean, Std: $rawStd")
+                    Log.e(TAG, "   Sum: $rawSum (if ~1.0, model outputs PROBABILITIES; if not, outputs LOGITS)")
+                    Log.e(TAG, "   Top 5: ${top5Indices.joinToString { "idx=${it.first}=${it.second}" }}")
+                    
+                    // Check if output is suspiciously uniform
+                    if (rawMax - rawMin < 0.1f) {
+                        Log.e(TAG, "❌ CRITICAL: Model output range is too small (${rawMax - rawMin}) - model may not be processing input!")
+                    }
+                    // Check if model outputs probabilities (sums to ~1.0)
+                    if (kotlin.math.abs(rawSum - 1.0f) < 0.01f) {
+                        Log.e(TAG, "⚠️ WARNING: Model outputs sum to ~1.0 - model has SOFTMAX layer! Do NOT apply softmax again!")
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "❌ CRITICAL: Inference execution failed!", e)
+                    Log.e(TAG, "❌ Inference error type: ${e.javaClass.simpleName}, message: ${e.message}")
+                    Log.e(TAG, "❌ Buffer state: capacity=${inputBuffer.capacity()}, position=${inputBuffer.position()}, limit=${inputBuffer.limit()}")
+                    Log.e(TAG, "❌ Active delegate: $activeDelegate")
+                    throw IllegalStateException("LSTM inference execution failed", e)
+                }
                 
                 MultiOutputResult(glossOutput[0], null)
             }

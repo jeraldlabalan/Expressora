@@ -88,7 +88,7 @@ class TranslationActivity : ComponentActivity(), TextToSpeech.OnInitListener {
     private var tts: TextToSpeech? = null
     private var ttsReady by mutableStateOf(false)
     private var selectedLanguage by mutableStateOf("English")
-    private lateinit var holisticEngine: HolisticLandmarkerEngine
+    private var holisticEngine: HolisticLandmarkerEngine? = null
     @Volatile private var recognitionEnabled = false
     @Volatile private var handEngineReady = false
     private var debugFrameCount = 0
@@ -138,6 +138,19 @@ class TranslationActivity : ComponentActivity(), TextToSpeech.OnInitListener {
         recognitionEnabled = false
         handEngineReady = false
         assetsReady = RecognitionProvider.ensureAssets(this)
+        
+        // Check if holistic model exists separately (for holistic-only mode)
+        // This allows initialization even if ensureAssets() returns false
+        val holisticModelExists = runCatching {
+            this.assets.open(RecognitionProvider.HOLISTIC_TASK_ASSET).close()
+            true
+        }.getOrElse { false }
+        
+        if (holisticModelExists) {
+            Log.i(TAG, "✅ Holistic model found: ${RecognitionProvider.HOLISTIC_TASK_ASSET}. Holistic mode available.")
+        } else {
+            Log.w(TAG, "⚠️ Holistic model not found: ${RecognitionProvider.HOLISTIC_TASK_ASSET}")
+        }
 
         cameraPermissionGranted = ContextCompat.checkSelfPermission(
             this, Manifest.permission.CAMERA
@@ -147,8 +160,14 @@ class TranslationActivity : ComponentActivity(), TextToSpeech.OnInitListener {
             lifecycleScope.launch { _cameraPermissionState.emit(true) }
         }
 
-        if (assetsReady) {
-            RecognitionProvider.logDiagnostics(this)
+        // Initialize holistic engine if holistic model exists OR all assets are ready
+        if (holisticModelExists || assetsReady) {
+            if (assetsReady) {
+                RecognitionProvider.logDiagnostics(this)
+                Log.i(TAG, "📦 Full assets mode: All recognition assets available")
+            } else {
+                Log.i(TAG, "🔧 Holistic-only mode: Using holistic model only (some assets missing)")
+            }
 
             if (PerformanceConfig.ROI_ENABLED) {
                 try {
@@ -169,7 +188,8 @@ class TranslationActivity : ComponentActivity(), TextToSpeech.OnInitListener {
             handEngineInitializing = true
             lifecycleScope.launch(Dispatchers.IO) {
                 try {
-                    Log.i(TAG, "Initializing HolisticLandmarkerEngine on background thread...")
+                    val mode = if (assetsReady) "full assets" else "holistic-only"
+                    Log.i(TAG, "🚀 Initializing HolisticLandmarkerEngine on background thread... (mode: $mode)")
                     var frameCount = 0
                     var handsDetectedCount = 0
                     var faceDetectedCount = 0
@@ -259,7 +279,7 @@ class TranslationActivity : ComponentActivity(), TextToSpeech.OnInitListener {
                         _handEngineInitializationState.emit(true)
                         Log.i(TAG, "HolisticLandmarkerEngine initialized successfully on background thread")
 
-                        val holisticDelegate = "${holisticEngine.getDelegateType().name}/${holisticEngine.getRunningMode().name}"
+                        val holisticDelegate = "${holisticEngine?.getDelegateType()?.name}/${holisticEngine?.getRunningMode()?.name}" ?: "Unknown"
 
                         launch {
                             delay(1000)
@@ -302,7 +322,8 @@ class TranslationActivity : ComponentActivity(), TextToSpeech.OnInitListener {
                 }
             }
         } else {
-            Log.w(TAG, "Recognition assets missing; Start Recognition disabled.")
+            Log.w(TAG, "❌ Recognition assets missing and holistic model not found; Start Recognition disabled.")
+            Log.w(TAG, "   Required: Either holistic model (${RecognitionProvider.HOLISTIC_TASK_ASSET}) or all recognition assets")
             lifecycleScope.launch {
                 _handEngineInitializationState.emit(false)
             }
@@ -325,8 +346,24 @@ class TranslationActivity : ComponentActivity(), TextToSpeech.OnInitListener {
             val isTranslating by recognitionViewModel.isTranslating.collectAsState()
             val useOnlineMode by recognitionViewModel.useOnlineMode.collectAsState()
 
+            // Force offline mode on startup (for testing TFLite model)
+            LaunchedEffect(Unit) {
+                if (useOnlineMode) {
+                    recognitionViewModel.toggleOnlineMode()
+                    Log.d(TRANSLATION_SCREEN_TAG, "🔄 Forced offline mode on startup for TFLite testing")
+                }
+            }
+
             LaunchedEffect(glossList) {
-                Log.d(TRANSLATION_SCREEN_TAG, "🖥️ UI: glossList changed: size=${glossList.size}, items=[${glossList.joinToString(", ")}]")
+                Log.i(TRANSLATION_SCREEN_TAG, "🖥️ ========== UI GLOSSLIST CHANGED ==========")
+                Log.i(TRANSLATION_SCREEN_TAG, "   Size: ${glossList.size} items")
+                Log.i(TRANSLATION_SCREEN_TAG, "   Items: [${glossList.joinToString(", ")}]")
+                Log.i(TRANSLATION_SCREEN_TAG, "   Will display: ${glossList.isNotEmpty()}")
+                if (glossList.isNotEmpty()) {
+                    Log.i(TRANSLATION_SCREEN_TAG, "   ✅ Gloss sequence will be visible below camera")
+                } else {
+                    Log.i(TRANSLATION_SCREEN_TAG, "   ⚠️ Gloss sequence is empty - will not display")
+                }
             }
 
             LaunchedEffect(isTranslating) {
@@ -403,11 +440,26 @@ class TranslationActivity : ComponentActivity(), TextToSpeech.OnInitListener {
 
                             // Debug logging: print every 60 frames to confirm analyzer is alive
                             if (debugFrameCount++ % 60 == 0) {
-                                Log.v(TAG, "📷 Analyzer alive. Scanning: $isScanning, RecognitionEnabled: $recognitionEnabled, HandEngineReady: $handEngineReady")
+                                Log.v(TAG, "📷 Analyzer alive. Scanning: $isScanning, RecognitionEnabled: $recognitionEnabled, AssetsReady: $assetsReady, HandEngineReady: $handEngineReady, HasCameraPermission: $hasCameraPermission")
                             }
 
-                            if (recognitionEnabled && assetsReady && handEngineReady && hasCameraPermission && isScanning) {
-                                holisticEngine.detectAsync(bitmap, timestamp)
+                            // Check all conditions for detectAsync
+                            val canDetect = recognitionEnabled && assetsReady && handEngineReady && hasCameraPermission && isScanning
+                            if (canDetect) {
+                                holisticEngine?.detectAsync(bitmap, timestamp)
+                                if (debugFrameCount % 60 == 0) {
+                                    Log.d(TAG, "✅ detectAsync called: all conditions met")
+                                }
+                            } else {
+                                if (debugFrameCount % 60 == 0) {
+                                    val reasons = mutableListOf<String>()
+                                    if (!recognitionEnabled) reasons.add("recognitionEnabled=false")
+                                    if (!assetsReady) reasons.add("assetsReady=false")
+                                    if (!handEngineReady) reasons.add("handEngineReady=false")
+                                    if (!hasCameraPermission) reasons.add("hasCameraPermission=false")
+                                    if (!isScanning) reasons.add("isScanning=false")
+                                    Log.d(TAG, "⏸️ detectAsync NOT called: ${reasons.joinToString(", ")}")
+                                }
                             }
                         } catch (error: Throwable) {
                             Log.e(HAND_TAG, "detectAsync failed", error)
@@ -514,7 +566,7 @@ class TranslationActivity : ComponentActivity(), TextToSpeech.OnInitListener {
 
         if (handEngineReady) {
             try {
-                holisticEngine.close()
+                holisticEngine?.close()
                 handEngineReady = false
             } catch (e: Exception) {
                 Log.e(TAG, "Error closing hand engine", e)
@@ -1033,13 +1085,19 @@ fun TranslationScreen(
 
             // 3. Translate Button (Bottom Right)
             if (glossList.isNotEmpty() && isScanning) {
+                LaunchedEffect(glossList, isScanning) {
+                    Log.d(TRANSLATION_SCREEN_TAG, "✅ Translate button visible: glossList.size=${glossList.size}, isScanning=$isScanning")
+                }
                 Box(
                     modifier = Modifier
                         .align(Alignment.BottomEnd)
                         .padding(24.dp)
                 ) {
                     FloatingActionButton(
-                        onClick = onConfirmTranslation,
+                        onClick = {
+                            Log.i(TRANSLATION_SCREEN_TAG, "🖱️ Translate button clicked")
+                            onConfirmTranslation()
+                        },
                         containerColor = Color(0xFF2196F3)
                     ) {
                         Text(
@@ -1052,29 +1110,46 @@ fun TranslationScreen(
                         )
                     }
                 }
+            } else {
+                LaunchedEffect(glossList, isScanning) {
+                    Log.d(TRANSLATION_SCREEN_TAG, "⚠️ Translate button hidden: glossList.size=${glossList.size}, isScanning=$isScanning")
+                }
             }
 
             // 4. Modal Bottom Sheet (Translation Result)
             val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
             LaunchedEffect(isTranslating) {
-                if (isTranslating) sheetState.show()
-                else if (translationResult == null) sheetState.hide()
+                Log.i(TRANSLATION_SCREEN_TAG, "🔄 isTranslating changed: $isTranslating")
+                if (isTranslating) {
+                    Log.i(TRANSLATION_SCREEN_TAG, "   ✅ Showing ModalBottomSheet (loading state)")
+                    sheetState.show()
+                } else if (translationResult == null) {
+                    Log.i(TRANSLATION_SCREEN_TAG, "   ⬇️ Hiding ModalBottomSheet (translation cancelled)")
+                    sheetState.hide()
+                }
             }
 
             LaunchedEffect(translationResult) {
-                if (translationResult != null && !isTranslating) sheetState.show()
+                Log.i(TRANSLATION_SCREEN_TAG, "🔄 translationResult changed: ${if (translationResult != null) "not null" else "null"}")
+                if (translationResult != null && !isTranslating) {
+                    Log.i(TRANSLATION_SCREEN_TAG, "   ✅ Showing ModalBottomSheet (result ready)")
+                    sheetState.show()
+                }
             }
 
             if (isTranslating || translationResult != null) {
+                Log.d(TRANSLATION_SCREEN_TAG, "📋 ModalBottomSheet condition met: isTranslating=$isTranslating, translationResult=${if (translationResult != null) "not null" else "null"}")
                 ModalBottomSheet(
                     sheetState = sheetState,
                     onDismissRequest = {
+                        Log.i(TRANSLATION_SCREEN_TAG, "📋 ModalBottomSheet dismissed")
                         if (!isTranslating) onResumeScanning()
                     },
                     containerColor = cardBgColor
                 ) {
                     if (isTranslating && translationResult == null) {
+                        Log.d(TRANSLATION_SCREEN_TAG, "   📋 Showing loading state in ModalBottomSheet")
                         Column(
                             modifier = Modifier.fillMaxWidth().padding(24.dp),
                             horizontalAlignment = Alignment.CenterHorizontally

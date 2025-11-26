@@ -10,7 +10,7 @@ class RecognitionViewModelFactory(
     private val engine: RecognitionEngine? = null,
     private val streamer: LandmarkStreamer? = null,
     private val context: Context,
-    private val useOnlineMode: Boolean = true
+    private val useOnlineMode: Boolean = false  // Default: Offline (for TFLite testing)
 ) : ViewModelProvider.Factory {
     @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(modelClass: Class<T>): T {

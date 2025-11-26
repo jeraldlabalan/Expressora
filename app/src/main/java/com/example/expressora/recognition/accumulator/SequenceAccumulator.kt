@@ -33,6 +33,9 @@ class SequenceAccumulator(
 ) {
     private val TAG = "SequenceAccumulator"
     
+    // Minimum time between accepting ANY token (prevents rapid-fire acceptance)
+    private val MIN_TIME_BETWEEN_TOKENS_MS = 600L
+    
     // --- FSM Configuration ---
     private val HOLD_FRAMES_REQUIRED = 5      // Frames to hold a sign before registering
     private val HOLD_OUT_EXIT_THRESHOLD = 0.4f // Hand variance threshold to exit HOLD_OUT (Dynamic movement)
@@ -329,27 +332,88 @@ class SequenceAccumulator(
      * @param token The gloss label to add immediately
      */
     fun onSingleShotResult(token: String) {
+        Log.i(TAG, "⚡ ========== onSingleShotResult CALLED ==========")
+        Log.i(TAG, "   Token: '$token'")
+        Log.i(TAG, "   Current state: $currentState")
+        Log.i(TAG, "   Current tokens: ${_state.value.tokens.size} items [${_state.value.tokens.joinToString(", ")}]")
+        Log.i(TAG, "   Last accepted: '$lastAcceptedLabel'")
+        Log.i(TAG, "   Can add token: ${_state.value.canAddToken()}")
+        
         if (token.isBlank()) {
-            Log.v(TAG, "onSingleShotResult: Empty token ignored")
+            Log.w(TAG, "   ❌ Empty token ignored")
             return
         }
         
         // 1. Debounce: If we just added this token and haven't reset, ignore it
         // Check if we're in HOLD_OUT state and this is the same token we just accepted
         if (currentState == State.HOLD_OUT && lastAcceptedLabel == token) {
-            Log.v(TAG, "♻️ Ignoring duplicate server response: '$token' (already in HOLD_OUT)")
+            Log.i(TAG, "   ♻️ Ignoring duplicate server response: '$token' (already in HOLD_OUT)")
+            Log.i(TAG, "   This is expected behavior - server may send same gloss multiple times")
             return
         }
         
-        // 2. Check if sequence is full
+        // 2. FSM State Check: If in HOLD_OUT, check exit conditions (variance or time)
+        val now = System.currentTimeMillis()
+        if (currentState == State.HOLD_OUT) {
+            // Different token detected - check if we can exit HOLD_OUT
+            if (token != lastRegisteredGloss) {
+                // Check variance if we have wrist data (FSM Exit C: Dynamic Movement)
+                if (historySize >= 5) {
+                    val variance = calculateVariance()
+                    Log.d(TAG, "   📊 Variance check: variance=$variance, threshold=$HOLD_OUT_EXIT_THRESHOLD")
+                    
+                    if (variance > HOLD_OUT_EXIT_THRESHOLD) {
+                        // High variance = dynamic movement detected - allow FSM Exit C
+                        Log.d(TAG, "   ✅ FSM Exit C: HOLD_OUT -> MONITORING (High variance: $variance > $HOLD_OUT_EXIT_THRESHOLD)")
+                        potentialGloss = token
+                        stableFrameCount = 1
+                        currentState = State.MONITORING
+                        // Will transition back to HOLD_OUT after accepting token
+                    } else {
+                        // Low variance = static/no movement - check time-based fallback
+                        if (lastAcceptedTime > 0 && (now - lastAcceptedTime) < MIN_TIME_BETWEEN_TOKENS_MS) {
+                            Log.i(TAG, "   ⏸️ Token rejected: low variance (${variance} <= ${HOLD_OUT_EXIT_THRESHOLD}) and too soon (${now - lastAcceptedTime}ms < ${MIN_TIME_BETWEEN_TOKENS_MS}ms)")
+                            Log.i(TAG, "   FSM: Still in HOLD_OUT, waiting for dynamic movement or time window")
+                            return
+                        } else {
+                            // Enough time passed - allow with time-based fallback
+                            Log.d(TAG, "   ⏱️ Time-based fallback: enough time passed (${now - lastAcceptedTime}ms >= ${MIN_TIME_BETWEEN_TOKENS_MS}ms)")
+                            currentState = State.MONITORING
+                            potentialGloss = token
+                            stableFrameCount = 1
+                        }
+                    }
+                } else {
+                    // No wrist data available - use time-based debounce only
+                    Log.d(TAG, "   ⚠️ No wrist data for variance check (historySize=$historySize < 5), using time-based debounce")
+                    if (lastAcceptedTime > 0 && (now - lastAcceptedTime) < MIN_TIME_BETWEEN_TOKENS_MS) {
+                        Log.i(TAG, "   ⏸️ Token rejected: too soon after last acceptance (${now - lastAcceptedTime}ms < ${MIN_TIME_BETWEEN_TOKENS_MS}ms)")
+                        return
+                    } else {
+                        // Enough time passed - allow
+                        currentState = State.MONITORING
+                        potentialGloss = token
+                        stableFrameCount = 1
+                    }
+                }
+            }
+            // If same token, already handled by duplicate check above
+        } else {
+            // Not in HOLD_OUT - check time-based debounce as fallback
+            if (lastAcceptedTime > 0 && (now - lastAcceptedTime) < MIN_TIME_BETWEEN_TOKENS_MS) {
+                Log.i(TAG, "   ⏸️ Token rejected: too soon after last acceptance (${now - lastAcceptedTime}ms < ${MIN_TIME_BETWEEN_TOKENS_MS}ms)")
+                return
+            }
+        }
+        
+        // 3. Check if sequence is full
         val currentTokens = _state.value.tokens
         if (!_state.value.canAddToken()) {
-            Log.w(TAG, "onSingleShotResult: Cannot add token, sequence full (${currentTokens.size}/$maxTokens)")
+            Log.w(TAG, "   ❌ Cannot add token, sequence full (${currentTokens.size}/$maxTokens)")
             return
         }
         
-        // 3. Commit Immediately
-        val now = System.currentTimeMillis()
+        // 4. Commit Immediately
         val newTokens = currentTokens + token
         _state.value = _state.value.copy(
             tokens = newTokens,
@@ -362,10 +426,17 @@ class SequenceAccumulator(
         lastAcceptedTime = now
         lastRegisteredGloss = token
         
-        Log.i(TAG, "⚡ Single-Shot Accepted: '$token' (total: ${newTokens.size}), tokens=[${newTokens.joinToString(", ")}]")
+        Log.i(TAG, "   ✅ Single-Shot Accepted: '$token'")
+        Log.i(TAG, "   New token count: ${newTokens.size} items")
+        Log.i(TAG, "   New tokens: [${newTokens.joinToString(", ")}]")
+        Log.i(TAG, "   State updated - accumulator state will notify observers")
+        Log.i(TAG, "   ✅✅✅ Token added successfully!")
+        Log.i(TAG, "   📤 StateFlow will emit new state, RecognitionViewModel observer will sync to _glossList")
+        Log.i(TAG, "   📤 UI should update automatically via StateFlow.collectAsState()")
         
         // Auto-commit if we hit max
         if (newTokens.size >= maxTokens) {
+            Log.i(TAG, "   📤 Max tokens reached, auto-committing sequence...")
             commitSequence()
         }
     }

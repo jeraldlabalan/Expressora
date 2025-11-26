@@ -71,3 +71,14 @@
 -keepclassmembers class com.example.expressora.recognition.view.** {
     public <init>(...);
 }
+
+# Exclude test classes from release builds (fixes R8 minification errors)
+-dontwarn org.robolectric.**
+-keep class org.robolectric.** { *; }
+-dontwarn android.app.ActivityThread
+
+# Exclude all test classes
+-keep class * extends junit.framework.TestCase { *; }
+-dontwarn junit.framework.**
+-dontwarn org.junit.**
+-dontwarn org.hamcrest.**
